@@ -52,17 +52,35 @@ function gb_ensureOrderHeader_(sheet) {
   }
 }
 
+/** 同一次執行只讀一次設定表。圖片存在格子裡時，反覆 getValues 是開啟變慢的主因。 */
+var GB_SETTINGS_CACHE_ = null;
+
+function gb_loadSettingsMap_(sheet) {
+  if (GB_SETTINGS_CACHE_) {
+    if (sheet && !GB_SETTINGS_CACHE_.sheet) GB_SETTINGS_CACHE_.sheet = sheet;
+    return GB_SETTINGS_CACHE_;
+  }
+  var sh = sheet || SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var map = {};
+  var rowOf = {};
+  if (sh && sh.getLastRow() >= 2) {
+    var numRows = sh.getLastRow() - 1;
+    var rows = sh.getRange(2, 1, numRows, 2).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (!rows[i][0]) continue;
+      var key = String(rows[i][0]);
+      map[key] = rows[i][1];
+      rowOf[key] = i + 2;
+    }
+  }
+  GB_SETTINGS_CACHE_ = { sheet: sh, map: map, rowOf: rowOf };
+  return GB_SETTINGS_CACHE_;
+}
+
 function gb_ensureDefaultSettings_() {
   var ss = SpreadsheetApp.getActive();
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
-  var lastRow = settingsSheet.getLastRow();
-  var existing = {};
-  if (lastRow >= 2) {
-    var rows = settingsSheet.getRange(2, 1, lastRow, 2).getValues();
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i][0]) existing[String(rows[i][0])] = rows[i][1];
-    }
-  }
+  var existing = gb_loadSettingsMap_(settingsSheet).map;
   var defaults = [
     ['exchangeRate', existing.exchangeRate != null ? existing.exchangeRate : '0.22'],
     ['portalTitle', existing.portalTitle != null ? existing.portalTitle : 'Heina訂單自助查詢'],
@@ -72,39 +90,21 @@ function gb_ensureDefaultSettings_() {
     ['portalExtraNote', existing.portalExtraNote != null ? existing.portalExtraNote : '付款後請填寫：付款日期、後五碼，等待對帳完成後即可在此查看狀態。'],
     ['portalLookupDesc', existing.portalLookupDesc != null ? existing.portalLookupDesc : '請輸入在社群裡的名字。若有改名或無法查詢請私訊官方 LINE。查單密碼為 4 位數字，可自行修改。']
   ];
-  var appendRows = [];
   for (var d = 0; d < defaults.length; d++) {
     var k = defaults[d][0];
-    if (existing[k] === undefined) appendRows.push(defaults[d]);
-  }
-  if (appendRows.length) {
-    var start = settingsSheet.getLastRow() + 1;
-    settingsSheet.getRange(start, 1, appendRows.length, 2).setValues(appendRows);
+    if (existing[k] === undefined) gb_upsertSetting_(settingsSheet, k, defaults[d][1]);
   }
 }
 
 function gb_getGroupCreditCard_(groupId) {
-  var key = 'gb_card_' + String(groupId || '');
-  var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(GB_SHEET_SETTINGS);
-  if (!sh || sh.getLastRow() < 2) return '';
-  var rows = sh.getRange(2, 1, sh.getLastRow(), 2).getValues();
-  for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === key) return String(rows[i][1] || '');
-  }
-  return '';
+  return gb_getGroupSetting_(groupId, 'card');
 }
 
 function gb_getGroupSetting_(groupId, suffix) {
   var key = 'gb_' + suffix + '_' + String(groupId || '');
-  var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(GB_SHEET_SETTINGS);
-  if (!sh || sh.getLastRow() < 2) return '';
-  var rows = sh.getRange(2, 1, sh.getLastRow(), 2).getValues();
-  for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === key) return String(rows[i][1] || '');
-  }
-  return '';
+  var cache = gb_loadSettingsMap_();
+  if (!Object.prototype.hasOwnProperty.call(cache.map, key)) return '';
+  return String(cache.map[key] || '');
 }
 
 function gb_setGroupCreditCard_(groupId, card) {
@@ -404,14 +404,7 @@ function gb_fetchAllData_() {
     return { id: r[0], date: r[1], bank: r[2], type: r[3], amount: r[4], category: r[5], note: note, lastFive: m ? m[1] : '' };
   });
 
-  var settings = {};
-  var sLast = settingsSheet.getLastRow();
-  if (sLast >= 2) {
-    var sRows = settingsSheet.getRange(2, 1, sLast, 2).getValues();
-    for (var si = 0; si < sRows.length; si++) {
-      if (sRows[si][0]) settings[String(sRows[si][0])] = sRows[si][1];
-    }
-  }
+  var settings = gb_loadSettingsMap_(settingsSheet).map;
   var exchangeRate = settings.exchangeRate ? Number(settings.exchangeRate) : 0.22;
   var portalConfig = gb_buildPortalConfigFromSettings_(settings);
 
@@ -425,7 +418,8 @@ function gb_fetchAllData_() {
     portalLookupCustomers: gb_readPortalLookupCustomers_(settings),
     customerBalanceMemos: gb_readCustomerBalanceMemos_(settings),
     consolidationShipments: gb_readConsolidationShipments_(settings),
-    bankViewer: gb_bankViewerPublicMeta_(bankViewerCfg)
+    bankViewer: gb_bankViewerPublicMeta_(bankViewerCfg),
+    dataRevision: String(settings.gb_dataRevision || '0')
   };
 }
 
@@ -676,6 +670,12 @@ function gb_saveBankJournal_(pl) {
 
 function gb_performSave_(payload) {
   gb_initSheets_();
+  var settingsSheetForRev = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var revCache = gb_loadSettingsMap_(settingsSheetForRev);
+  var currentRev = String(revCache.map.gb_dataRevision || '0');
+  if (payload && payload.dataRevision != null && String(payload.dataRevision) !== '' && String(payload.dataRevision) !== currentRev) {
+    throw new Error('資料已在另一個畫面更新，請重新整理後再儲存，避免蓋過剛改的內容。');
+  }
   var ss = SpreadsheetApp.getActive();
   var orderSheet = ss.getSheetByName(GB_SHEET_ORDERS);
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
@@ -738,23 +738,28 @@ function gb_performSave_(payload) {
   if (payload.consolidationShipments) {
     gb_writeConsolidationShipments_(settingsSheet, payload.consolidationShipments);
   }
-  return { status: 'success' };
+  var revNum = parseInt(currentRev, 10);
+  if (isNaN(revNum)) revNum = 0;
+  var nextRev = String(revNum + 1);
+  gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+  return { status: 'success', dataRevision: nextRev };
 }
 
 function gb_upsertSetting_(sheet, key, value) {
-  var last = sheet.getLastRow();
-  if (last < 2) {
-    sheet.appendRow([key, value]);
+  var cache = gb_loadSettingsMap_(sheet);
+  var next = value == null ? '' : String(value);
+  if (Object.prototype.hasOwnProperty.call(cache.map, key) && String(cache.map[key] == null ? '' : cache.map[key]) === next) {
     return;
   }
-  var range = sheet.getRange(2, 1, last, 2).getValues();
-  for (var i = 0; i < range.length; i++) {
-    if (String(range[i][0]) === String(key)) {
-      sheet.getRange(i + 2, 2).setValue(value);
-      return;
-    }
+  cache.map[key] = value;
+  var sh = cache.sheet || sheet;
+  var row = cache.rowOf[key];
+  if (row) {
+    sh.getRange(row, 2).setValue(value);
+    return;
   }
-  sheet.appendRow([key, value]);
+  sh.appendRow([key, value]);
+  cache.rowOf[key] = sh.getLastRow();
 }
 
 function gb_readPaymentReports_(settings) {
@@ -954,14 +959,7 @@ function gb_loadBankViewerFromSheet_() {
   gb_initSheets_();
   var ss = SpreadsheetApp.getActive();
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
-  var settings = {};
-  var sLast = settingsSheet.getLastRow();
-  if (sLast >= 2) {
-    var sRows = settingsSheet.getRange(2, 1, sLast, 2).getValues();
-    for (var si = 0; si < sRows.length; si++) {
-      if (sRows[si][0]) settings[String(sRows[si][0])] = sRows[si][1];
-    }
-  }
+  var settings = gb_loadSettingsMap_(settingsSheet).map;
   return {
     sheet: settingsSheet,
     config: gb_migrateBankPassword_(settingsSheet, settings, gb_readBankViewerConfig_(settings))

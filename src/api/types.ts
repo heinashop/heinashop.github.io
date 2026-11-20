@@ -285,6 +285,8 @@ export type GroupBuyAppData = {
   consolidationShipments?: ConsolidationShipment[]
   /** 銀行帳號安全查詢（getAppData 不含明文密碼） */
   bankViewer?: BankViewerPublicMeta
+  /** 整包資料版本。儲存時帶回，避免蓋過另一個畫面剛寫入的內容。 */
+  dataRevision?: string
 }
 
 export type GroupBuySavePayload = {
@@ -297,6 +299,8 @@ export type GroupBuySavePayload = {
   portalLookupCustomers?: PortalLookupCustomer[]
   customerBalanceMemos?: SharedCustomerBalanceMemo[]
   consolidationShipments?: ConsolidationShipment[]
+  /** 由前端依最近一次讀取帶上；舊版前端不帶時，後端不擋儲存。 */
+  dataRevision?: string
 }
 
 export type SaveBankJournalPayload = {

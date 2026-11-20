@@ -1,5 +1,5 @@
 import type { UnifiedClient } from '../api/client'
-import type { UnifiedRequest } from '../api/types'
+import type { GroupBuyAppData, UnifiedRequest } from '../api/types'
 import { attachAdminToken } from '../auth/attachAdminToken'
 import { gasWebAppUrl, hasRemoteGas } from '../config/gasEndpoint'
 
@@ -92,18 +92,87 @@ function shouldTryJsonp(err: unknown): boolean {
   return /failed to fetch|network|cors|load failed/i.test(msg)
 }
 
+const APP_DATA_MUTATIONS = new Set([
+  'saveAppData',
+  'saveBankJournal',
+  'syncPortalLookupCustomers',
+  'confirmPaymentReport',
+  'deletePaymentReport',
+  'revertPaymentReport',
+  'updatePaymentReportLineFlags',
+  'supplementPaymentReport',
+  'importDataPack',
+  'changeLookupPin',
+])
+
+type AppDataCache = { revision: string; data: GroupBuyAppData }
+
+let appDataCache: AppDataCache | null = null
+let appDataFlight: Promise<GroupBuyAppData> | null = null
+let publicGroupsCache: { at: number; data: unknown } | null = null
+let mutationFlight = false
+
+function payloadRecord(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'object') return null
+  return payload as Record<string, unknown>
+}
+
 export function createGasHttpClient(): UnifiedClient {
   const url = gasWebAppUrl()
   return {
     async call<T>(req: UnifiedRequest): Promise<T> {
       if (!url) throw new Error('尚未設定 VITE_GAS_URL')
-      const bodyReq = attachAdminToken(req)
-      try {
-        return await postCall<T>(url, bodyReq)
-      } catch (err) {
-        if (!shouldTryJsonp(err)) throw err
-        return jsonpCall<T>(url, bodyReq)
+      const readApp = req.module === 'groupbuy' && req.action === 'getAppData'
+      const fresh = Boolean(payloadRecord(req.payload)?.fresh)
+      const publicList = req.module === 'groupbuy' && req.action === 'listPublicGroups'
+      const mutate = req.module === 'groupbuy' && APP_DATA_MUTATIONS.has(req.action)
+
+      if (readApp && !fresh && appDataCache) return appDataCache.data as T
+      if (readApp && !fresh && appDataFlight) return appDataFlight as Promise<T>
+      if (publicList && publicGroupsCache && Date.now() - publicGroupsCache.at < 60_000) {
+        return publicGroupsCache.data as T
       }
+      if (mutate && mutationFlight) {
+        throw new Error('上一筆儲存還沒完成，請稍候再按')
+      }
+
+      let bodyReq = attachAdminToken(req)
+      if (mutate && appDataCache) {
+        bodyReq = {
+          ...bodyReq,
+          payload: { ...(payloadRecord(bodyReq.payload) || {}), dataRevision: appDataCache.revision },
+        }
+      }
+      if (mutate) mutationFlight = true
+
+      const run = (async () => {
+        try {
+          let data: T
+          try {
+            data = await postCall<T>(url, bodyReq)
+          } catch (err) {
+            if (!shouldTryJsonp(err)) throw err
+            data = await jsonpCall<T>(url, bodyReq)
+          }
+          if (readApp) {
+            const packed = data as GroupBuyAppData
+            appDataCache = { revision: String(packed.dataRevision ?? '0'), data: packed }
+          }
+          if (publicList) publicGroupsCache = { at: Date.now(), data }
+          if (mutate) {
+            appDataCache = null
+            appDataFlight = null
+            publicGroupsCache = null
+          }
+          return data
+        } finally {
+          if (mutate) mutationFlight = false
+          if (readApp) appDataFlight = null
+        }
+      })()
+
+      if (readApp && !fresh) appDataFlight = run as Promise<GroupBuyAppData>
+      return run
     },
   }
 }

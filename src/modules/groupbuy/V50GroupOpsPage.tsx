@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Building2, Flag, Hand, Package, Plus, RefreshCw, ShoppingCart, Truck, FileDown, FileUp } from 'lucide-react'
 import { Btn, PageHeader } from '../../components/ui'
@@ -180,10 +180,14 @@ export function V50GroupOpsPage() {
   const [costSaving, setCostSaving] = useState(false)
   const [excelModal, setExcelModal] = useState<'export' | 'import' | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     setLoading(true)
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({
+        module: 'groupbuy',
+        action: 'getAppData',
+        payload: fresh ? { fresh: true } : undefined,
+      })
       const ships = data.consolidationShipments || []
       const rawGroups = data.groups || []
       const nextShips = syncShipmentsFromGroupStatuses(rawGroups, ships)
@@ -231,12 +235,19 @@ export function V50GroupOpsPage() {
     if (!fromUrl) setViewGroupIdState(null)
   }, [searchParams, groups])
 
+  const savingRef = useRef(false)
+
   const persist = useCallback(
     async (
       nextGroups: GroupBuyGroup[],
       nextJournal = bankJournal,
       nextPaymentReports = paymentReports,
     ) => {
+      if (savingRef.current) {
+        setStatusMsg('上一筆儲存還沒完成，請稍候再按')
+        return
+      }
+      savingRef.current = true
       setStatusMsg('儲存中…')
       try {
         const nextShips = syncShipmentsFromGroupStatuses(nextGroups, consolidationShipments)
@@ -262,9 +273,11 @@ export function V50GroupOpsPage() {
         setStatusMsg('已儲存')
       } catch (e) {
         console.error(e)
-        setStatusMsg('儲存失敗')
+        setStatusMsg(e instanceof Error ? e.message : '儲存失敗')
+      } finally {
+        savingRef.current = false
       }
-      setTimeout(() => setStatusMsg(''), 2200)
+      setTimeout(() => setStatusMsg(''), 3200)
     },
     [api, bankJournal, exchangeRate, paymentReports, portalConfig, consolidationShipments],
   )
@@ -616,7 +629,7 @@ export function V50GroupOpsPage() {
                 <FileUp className="h-4 w-4" />
                 匯入 Excel
               </Btn>
-              <Btn variant="secondary" onClick={() => void load()}>
+              <Btn variant="secondary" onClick={() => void load(true)}>
                 <RefreshCw className="h-4 w-4" />
                 重新載入
               </Btn>
