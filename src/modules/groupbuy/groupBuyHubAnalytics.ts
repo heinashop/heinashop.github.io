@@ -2,6 +2,7 @@ import type { GroupBuyChannel, GroupBuyGroup, GroupBuyOrder } from '../../api/ty
 import type { Group, Order, Shipment } from '../../daigou/types'
 import {
   daysUntil,
+  formatYmd,
   listPendingShipmentIds,
   localTodayIso,
   normalizeGroupStatus,
@@ -115,8 +116,8 @@ export function listImminentClosingGroups(
   for (const g of groups) {
     const status = normalizeGroupStatus(g.status)
     if (status === '已結束') continue
-    const closingDate = String(g.closingDate || '').trim()
-    const saleEndDate = String(g.saleEndDate || '').trim()
+    const closingDate = formatYmd(g.closingDate)
+    const saleEndDate = formatYmd(g.saleEndDate)
     const daysToClosing = closingDate ? daysUntil(closingDate, today) : null
     const daysToSaleEnd = saleEndDate ? daysUntil(saleEndDate, today) : null
     const hitClosing =

@@ -8,7 +8,7 @@ import { GroupImageGalleryEditor } from '../../components/groups/GroupImageGalle
 import { useApi } from '../../context/useApi'
 import { useDaigouStore } from '../../daigou/store'
 import { isInGroupOps, isMailOrderChannel, isOpsActive } from '../../modules/groupbuy/groupLifecycle'
-import { V50_GROUP_STATUSES, normalizeGroupStatus } from '../../modules/groupbuy/v50Utils'
+import { V50_GROUP_STATUSES, formatYmd, normalizeGroupStatus } from '../../modules/groupbuy/v50Utils'
 import { normalizeGroupImageUrls, primaryGroupImageUrl } from './openGroupImages'
 import { groupOpsHref } from './openGroupsUtils'
 import { GroupImageSwipe } from './GroupImageSwipe'
@@ -41,8 +41,8 @@ function toEditForm(group: PublicGroupCatalogItem): PortalEditForm {
     name: group.name || '',
     description: group.description || '',
     imageUrls: normalizeGroupImageUrls(group.imageUrls, group.coverImageUrl),
-    closingDate: group.closingDate || '',
-    officialShipDate: group.officialShipDate || '',
+    closingDate: formatYmd(group.closingDate),
+    officialShipDate: formatYmd(group.officialShipDate),
     status: normalizeGroupStatus(group.status),
     remarks: group.remarks || '',
     channel,
@@ -319,11 +319,11 @@ export function OpenGroupDetailPage({ embedded = false }: Props) {
                   <dl className="og-detail-meta">
                     <div>
                       <dt>結單日期</dt>
-                      <dd>{dash(group.closingDate)}</dd>
+                      <dd>{dash(formatYmd(group.closingDate))}</dd>
                     </div>
                     <div>
                       <dt>官方出貨日</dt>
-                      <dd>{dash(group.officialShipDate)}</dd>
+                      <dd>{dash(formatYmd(group.officialShipDate))}</dd>
                     </div>
                     <div>
                       <dt>團務狀態</dt>

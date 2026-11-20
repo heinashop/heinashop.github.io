@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { GroupBuyGroup } from '../../api/types'
 import { openGroupManageHref } from '../../pages/open-groups/openGroupsUtils'
 import { isPortalListed } from './groupLifecycle'
-import { groupJpyDisplay, groupHasUnpaidOrders, groupOrderCount, normalizeGroupStatus } from './v50Utils'
+import { formatYmd, groupJpyDisplay, groupHasUnpaidOrders, groupOrderCount, normalizeGroupStatus } from './v50Utils'
 import './v50GroupCard.css'
 
 type Props = {
@@ -15,6 +15,10 @@ type Props = {
 function dash(v: string | undefined) {
   const s = String(v || '').trim()
   return s || '—'
+}
+
+function showDate(v: string | undefined) {
+  return dash(formatYmd(v))
 }
 
 export function V50GroupInfoCard({ group, onOpen, onEdit, onDelete }: Props) {
@@ -51,19 +55,19 @@ export function V50GroupInfoCard({ group, onOpen, onEdit, onDelete }: Props) {
         <div className="v50-gcard-grid">
           <div className="v50-gcard-field">
             <span className="v50-gcard-label">結單日期</span>
-            <span className="v50-gcard-value">{dash(group.closingDate)}</span>
+            <span className="v50-gcard-value">{showDate(group.closingDate)}</span>
           </div>
           <div className="v50-gcard-field">
             <span className="v50-gcard-label">結束販賣日</span>
-            <span className="v50-gcard-value">{dash(group.saleEndDate)}</span>
+            <span className="v50-gcard-value">{showDate(group.saleEndDate)}</span>
           </div>
           <div className="v50-gcard-field">
             <span className="v50-gcard-label">購買日期</span>
-            <span className="v50-gcard-value">{dash(group.purchaseDate)}</span>
+            <span className="v50-gcard-value">{showDate(group.purchaseDate)}</span>
           </div>
           <div className="v50-gcard-field">
             <span className="v50-gcard-label">官方出貨日</span>
-            <span className="v50-gcard-value">{dash(group.officialShipDate)}</span>
+            <span className="v50-gcard-value">{showDate(group.officialShipDate)}</span>
           </div>
           <div className="v50-gcard-field">
             <span className="v50-gcard-label">信用卡資訊</span>

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { PublicGroupCatalogItem } from '../../api/types'
-import { normalizeGroupStatus } from '../../modules/groupbuy/v50Utils'
+import { formatYmd, normalizeGroupStatus } from '../../modules/groupbuy/v50Utils'
 import { isInGroupOps, isMailOrderChannel } from '../../modules/groupbuy/groupLifecycle'
 import { normalizeGroupImageUrls, openGroupDetailHref } from './openGroupImages'
 import { groupOpsHref } from './openGroupsUtils'
@@ -90,11 +90,11 @@ export function OpenGroupCard({
           <dl className="og-card-meta">
             <div>
               <dt>結單日期</dt>
-              <dd>{dash(group.closingDate)}</dd>
+              <dd>{dash(formatYmd(group.closingDate))}</dd>
             </div>
             <div>
               <dt>官方出貨日</dt>
-              <dd>{dash(group.officialShipDate)}</dd>
+              <dd>{dash(formatYmd(group.officialShipDate))}</dd>
             </div>
           </dl>
           {!compact && group.remarks ? (

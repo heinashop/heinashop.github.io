@@ -176,7 +176,7 @@ export function V50GroupCostPanel({ group, saving, onSave }: Props) {
       <div className="v50-group-cost-panel-head">
         <div>
           <p className="v50-group-cost-title">下單成本</p>
-          <p className="v50-group-cost-hint">可新增多筆下單紀錄 · 日幣總額自動帶入，亦可手動修改</p>
+          <p className="v50-group-cost-hint">同一團可分多次下單。每筆金額分開記，團務搜尋輸入刷卡金額就能找到這團。</p>
         </div>
         <Btn variant="secondary" className="!min-h-9 !px-3 !py-2 text-sm" type="button" onClick={addRow}>
           <Plus className="h-4 w-4" />

@@ -27,6 +27,7 @@ import {
   resolveV50Deposit,
   suggestDeposit,
   groupOrderCount,
+  formatYmd,
   localTodayIso,
   normalizeGroupStatus,
   matchesV50GroupSearch,
@@ -94,10 +95,10 @@ function formToGroup(values: GroupSetupFormValues, existing?: GroupBuyGroup): Gr
     /** 從團務管理新建／編輯＝已成團 */
     opsActive: existing ? existing.opsActive !== false : true,
     portalListed: existing?.portalListed !== false,
-    closingDate: values.closingDate || today,
-    saleEndDate: values.saleEndDate || today,
-    officialShipDate: values.officialShipDate || '',
-    purchaseDate: values.purchaseDate || '',
+    closingDate: formatYmd(values.closingDate) || today,
+    saleEndDate: formatYmd(values.saleEndDate) || today,
+    officialShipDate: formatYmd(values.officialShipDate),
+    purchaseDate: formatYmd(values.purchaseDate),
     creditCard: values.cardPayNote.trim(),
     jpyAmount: Number(values.jpyAmountTotal) || 0,
     purchaseCosts: existing?.purchaseCosts ?? [],
@@ -118,10 +119,10 @@ function groupToForm(g: GroupBuyGroup): GroupSetupFormValues {
   return {
     name: g.name,
     groupStatus: normalizeGroupStatus(g.status),
-    closingDate: g.closingDate,
-    saleEndDate: g.saleEndDate,
-    purchaseDate: g.purchaseDate || '',
-    officialShipDate: g.officialShipDate,
+    closingDate: formatYmd(g.closingDate),
+    saleEndDate: formatYmd(g.saleEndDate),
+    purchaseDate: formatYmd(g.purchaseDate),
+    officialShipDate: formatYmd(g.officialShipDate),
     orderNumber: g.orderId,
     logisticsNumber: g.logisticsId,
     cardPayNote: g.creditCard || '',
@@ -676,7 +677,7 @@ export function V50GroupOpsPage() {
           <div className="v50-group-toolbar">
             <input
               className="heina-input gb-search"
-              placeholder="搜尋團務名稱、訂單編號、物流編號…"
+              placeholder="搜尋團名、訂單編號、物流編號、刷卡金額…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />

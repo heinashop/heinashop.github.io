@@ -1,4 +1,4 @@
-import type { GroupBuyGroup, GroupBuyItem, GroupBuyOrder } from '../../api/types'
+import type { GroupBuyGroup, GroupBuyItem, GroupBuyOrder, GroupBuyPurchaseCost } from '../../api/types'
 import type { Group, Order, Shipment } from '../../daigou/types'
 import { normalizeCustomerNameKey, resolveOrderCustomerDisplayName } from './customerNameKey'
 
@@ -75,9 +75,29 @@ export function localTodayIso(): string {
   return `${y}-${m}-${day}`
 }
 
+/** 試算表日期常變成 2026-08-01T00:00:00.000Z。畫面與日期欄只留年月日；純文字原樣保留。 */
+export function formatYmd(value: string | number | undefined | null): string {
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) {
+    const d = new Date(s)
+    if (!Number.isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Taipei',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d)
+    }
+  }
+  return s
+}
+
 export function daysUntil(iso: string, today = localTodayIso()): number | null {
-  if (!iso) return null
-  const endMs = Date.parse(`${iso}T00:00:00`)
+  const day = formatYmd(iso)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
+  const endMs = Date.parse(`${day}T00:00:00`)
   const startMs = Date.parse(`${today}T00:00:00`)
   if (Number.isNaN(endMs) || Number.isNaN(startMs)) return null
   return Math.round((endMs - startMs) / 86400000)
@@ -207,10 +227,31 @@ export function groupOrderCount(g: GroupBuyGroup): number {
   return (g.orders || []).length
 }
 
+function positiveAmount(v: string | number | undefined): number | null {
+  const n = Number(String(v ?? '').replace(/,/g, ''))
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n
+}
+
+function costRowJpy(c: GroupBuyPurchaseCost): number | null {
+  const total = positiveAmount(c.jpyTotal)
+  if (total != null) return total
+  const sum = (Number(c.jpyCost) || 0) + (Number(c.jpyShipping) || 0)
+  return sum > 0 ? sum : null
+}
+
+/** 同一團可有多筆下單金額；沒有成本列時沿用日幣預算。 */
+export function groupChargeAmounts(g: GroupBuyGroup): number[] {
+  const fromCosts = (g.purchaseCosts || []).map(costRowJpy).filter((n): n is number => n != null)
+  if (fromCosts.length) return fromCosts
+  const budget = positiveAmount(g.jpyAmount)
+  return budget != null ? [budget] : []
+}
+
 export function groupJpyDisplay(g: GroupBuyGroup): string {
-  const v = g.jpyAmount
-  if (v === '' || v == null) return '—'
-  return `¥${Number(v).toLocaleString()}`
+  const amounts = groupChargeAmounts(g)
+  if (!amounts.length) return '—'
+  return amounts.map((n) => `¥${n.toLocaleString()}`).join('、')
 }
 
 export const V50_GROUP_STATUSES = ['已登記', '已下單', '官方已發貨', '已集運', '已抵台', '已結束'] as const
@@ -223,7 +264,7 @@ export function normalizeGroupStatus(status?: string): V50GroupStatus {
   return '已登記'
 }
 
-/** 團務管理搜尋：團名、訂單編號、物流編號（含採購成本列） */
+/** 團務管理搜尋：團名、訂單編號、物流編號，以及每一筆刷卡／日幣金額 */
 export function matchesV50GroupSearch(group: GroupBuyGroup, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
@@ -233,9 +274,20 @@ export function matchesV50GroupSearch(group: GroupBuyGroup, query: string): bool
     group.logisticsId,
     group.description,
     group.remarks,
+    group.creditCard,
     ...(group.purchaseCosts?.map((c) => c.logisticsId) ?? []),
   ]
-  return fields.some((v) => String(v || '').toLowerCase().includes(q))
+  if (fields.some((v) => String(v || '').toLowerCase().includes(q))) return true
+  const digits = q.replace(/[^\d]/g, '')
+  if (digits.length < 3) return false
+  const amounts = [
+    group.jpyAmount,
+    ...(group.purchaseCosts ?? []).flatMap((c) => [c.jpyCost, c.jpyShipping, c.jpyTotal, c.twdCost]),
+  ]
+  return amounts.some((v) => {
+    const n = positiveAmount(v)
+    return n != null && String(Math.round(n)).includes(digits)
+  })
 }
 
 export function groupUnpaidCount(g: GroupBuyGroup): number {
@@ -261,8 +313,8 @@ function groupNewestKey(g: GroupBuyGroup): number {
 }
 
 function groupDateSortKey(iso?: string): number {
-  const s = String(iso || '').trim()
-  if (!s) return Number.POSITIVE_INFINITY
+  const s = formatYmd(iso)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return Number.POSITIVE_INFINITY
   const ms = Date.parse(`${s}T00:00:00`)
   return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
 }
