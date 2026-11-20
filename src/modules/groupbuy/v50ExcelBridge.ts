@@ -16,11 +16,14 @@ const EXPORT_HEADERS = [
   '日幣總額',
   '台幣單價',
   '台幣小計',
+  '訂金',
   '國內運費',
   '國際運費',
-  '訂金',
+  '尾款',
   '付款狀態',
 ] as const
+
+const KNOWN_PAY_STATUSES = new Set(['未付款', '已付訂金', '已付款', '已結清', '貨到付款'])
 
 function itemLineTwd(item: { twd: number; qty: number }): number {
   return (Number(item.twd) || 0) * (Number(item.qty) || 1)
@@ -35,6 +38,32 @@ function paidDepositCell(order: GroupBuyOrder): number | '' {
   const pay = String(order.paymentStatus || '').trim()
   if (pay !== '已付訂金' && pay !== '已付款' && pay !== '已結清') return ''
   return Number(order.deposit) || 0
+}
+
+/** 付款備註：日期 + #後五碼，例如 11/20 #66666。沒有可辨識內容就留空。 */
+function formatPaymentNoteCell(info: string): string {
+  const raw = String(info || '').trim()
+  if (!raw) return ''
+  const fiveMatch = raw.match(/#\s*(\d{5})\b/) || raw.match(/後五碼\s*#?\s*(\d{5})/)
+  const five = fiveMatch?.[1] || ''
+  const full = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/)
+  const short = !full ? raw.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})(?!\d)/) : null
+  const date = full
+    ? `${Number(full[2])}/${Number(full[3])}`
+    : short
+      ? `${Number(short[1])}/${Number(short[2])}`
+      : ''
+  if (date && five) return `${date} #${five}`
+  if (date) return date
+  if (five) return `#${five}`
+  return ''
+}
+
+function classifyPayCell(text: string): { status: string; note: string } {
+  const t = text.trim()
+  if (!t) return { status: '', note: '' }
+  if (KNOWN_PAY_STATUSES.has(t)) return { status: t, note: '' }
+  return { status: '', note: t }
 }
 
 function norm(s: string) {
@@ -84,6 +113,8 @@ export type V50ImportBlock = {
   /** null＝表上沒填，沿用既有客訂或系統計算 */
   deposit: number | null
   paymentStatus: string
+  /** null＝表上沒填付款備註，沿用既有客訂 */
+  paymentNote: string | null
 }
 
 export type V50ImportParseResult = {
@@ -112,10 +143,11 @@ export function exportV50GroupsToXlsx(groups: GroupBuyGroup[], filename?: string
           itemLineJpy(item),
           item.twd,
           itemLineTwd(item),
+          idx === 0 ? paidDepositCell(order) : '',
           idx === 0 ? order.domesticShip || 0 : '',
           idx === 0 ? order.intlShip || 0 : '',
-          idx === 0 ? paidDepositCell(order) : '',
-          idx === 0 ? order.paymentStatus || '未付款' : '',
+          idx === 0 ? (Number.isFinite(Number(order.balance)) ? Number(order.balance) : '') : '',
+          idx === 0 ? formatPaymentNoteCell(order.paymentInfo) : '',
         ])
       })
     }
@@ -243,8 +275,8 @@ export function downloadV50OrderTemplateXlsx() {
   const wb = XLSX.utils.book_new()
   const headers: (string | number)[][] = [
     [...EXPORT_HEADERS],
-    ['', '範例客人', '範例商品A', 1, 1999, 1999, 590, 590, 0, 0, 500, '已付訂金'],
-    ['', '', '範例商品B', 2, 999, 1998, 125, 250, '', '', '', ''],
+    ['', '範例客人', '範例商品A', 1, 1999, 1999, 590, 590, 500, 0, 0, 90, '11/20 #66666'],
+    ['', '', '範例商品B', 2, 999, 1998, 125, 250, '', '', '', '', ''],
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(headers), '登記表')
   const note: (string | number)[][] = [
@@ -253,8 +285,10 @@ export function downloadV50OrderTemplateXlsx() {
     ['2. 若每列都重複填名字，會被誤判成多筆客訂；續列品項請勿再填名字。'],
     ['3. 台幣單價=每件；台幣小計=單價×數量。日幣總額=日幣單價×數量（匯出用，匯入可略）。'],
     ['4. 匯入可只填台幣小計或日幣總額，系統會除以數量得單價。'],
-    ['5. 訂金、付款狀態請填在該客訂第一列。有填就以表上的為準；留空則沿用既有客訂或由系統計算。'],
-    ['6. 多團同時匯入：每個團務一個工作表，工作表名稱請與團務名稱相同。'],
+    ['5. 訂金請填在該客訂第一列。有填就以表上的為準；留空則沿用既有客訂或由系統計算。'],
+    ['6. 付款狀態填付款備註：日期與後五碼，例如 11/20 #66666。沒有就留空，不會改掉原本的付款狀況。'],
+    ['7. 尾款由系統依總額、訂金與運費計算，匯入時可留空。'],
+    ['8. 多團同時匯入：每個團務一個工作表，工作表名稱請與團務名稱相同。'],
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(note), '說明')
   XLSX.writeFile(wb, '團務客訂匯入範本.xlsx')
@@ -344,6 +378,7 @@ function parseRowsToBlocks(rows: Record<string, unknown>[]): V50ImportParseResul
         intlShip: intlShip || 0,
         deposit: null,
         paymentStatus: '',
+        paymentNote: null,
       }
     } else if (!cur) {
       if (product) warnings.push(`第 ${i + 1} 列：有商品「${product}」但上方尚無客戶，已略過`)
@@ -356,8 +391,11 @@ function parseRowsToBlocks(rows: Record<string, unknown>[]): V50ImportParseResul
     if (intlShip > 0) cur!.intlShip = intlShip
     const depositText = pick(row, '訂金')
     if (depositText !== '') cur!.deposit = numCell(row, '訂金')
-    const payStatus = pick(row, '付款狀態', '支付狀態')
-    if (payStatus) cur!.paymentStatus = payStatus
+    const noteCol = pick(row, '付款備註', '支付備註')
+    const payCell = classifyPayCell(pick(row, '付款狀態', '支付狀態'))
+    if (payCell.status) cur!.paymentStatus = payCell.status
+    const note = noteCol || payCell.note
+    if (note) cur!.paymentNote = note
 
     if (product) {
       const qty = Math.max(1, qtyHint || 1)
@@ -425,7 +463,10 @@ function finalizeImportedOrder(
   const intlShip = block.intlShip
   const totalTwd = calcItemsTotalTwd(items)
   const paymentStatus = block.paymentStatus.trim() || existing?.paymentStatus || '未付款'
-  const paymentInfo = existing?.paymentInfo ?? ''
+  const paymentInfo =
+    block.paymentNote != null && block.paymentNote.trim() !== ''
+      ? block.paymentNote.trim()
+      : (existing?.paymentInfo ?? '')
 
   let deposit: number
   if (paymentStatus === '貨到付款') deposit = 0
