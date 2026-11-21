@@ -146,6 +146,8 @@ export type GroupBuyOrder = {
 
 export type GroupBuyPurchaseCost = {
   id: string
+  /** 向日本店家下單取得的採購訂單號碼（與物流追蹤號不同） */
+  orderNumber?: string
   jpyCost?: string | number
   jpyShipping?: string | number
   jpyTotal?: string | number
@@ -461,12 +463,15 @@ export type CustomerPaymentReport = {
 
 export type SubmitCustomerPaymentReportPayload = {
   customerName: string
+  lookupPin: string
   remittanceDate: string
   lastFive: string
   totalAmount: number
   orderIds: string[]
   /** 本次一併回報的帳務備註（確認後才結清） */
   balanceMemos?: { id: string; amountTwd: number }[]
+  /** 重送時沿用相同值，後端只建立一筆回報 */
+  clientRequestId?: string
 }
 
 export type SubmitCustomerPaymentReportResult = {

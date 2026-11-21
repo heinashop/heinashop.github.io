@@ -186,25 +186,6 @@ export function GroupSetupModal({ open, onClose, onSubmit, initialValues, title,
               </div>
 
               <div className="group-setup-row">
-                <Field label="訂單編號">
-                  <input
-                    className="group-setup-input"
-                    placeholder="官方下單單號"
-                    value={form.orderNumber}
-                    onChange={(e) => patch('orderNumber', e.target.value)}
-                  />
-                </Field>
-                <Field label="物流編號">
-                  <input
-                    className="group-setup-input"
-                    placeholder="國際／國內追蹤碼"
-                    value={form.logisticsNumber}
-                    onChange={(e) => patch('logisticsNumber', e.target.value)}
-                  />
-                </Field>
-              </div>
-
-              <div className="group-setup-row">
                 <Field label="信用卡資訊">
                   <input
                     className="group-setup-input"

@@ -276,6 +276,7 @@ export function matchesV50GroupSearch(group: GroupBuyGroup, query: string): bool
     group.remarks,
     group.creditCard,
     ...(group.purchaseCosts?.map((c) => c.logisticsId) ?? []),
+    ...(group.purchaseCosts?.map((c) => c.orderNumber) ?? []),
   ]
   if (fields.some((v) => String(v || '').toLowerCase().includes(q))) return true
   const digits = q.replace(/[^\d]/g, '')
@@ -288,6 +289,34 @@ export function matchesV50GroupSearch(group: GroupBuyGroup, query: string): bool
     const n = positiveAmount(v)
     return n != null && String(Math.round(n)).includes(digits)
   })
+}
+
+export function v50PurchaseCostSearchHits(groups: GroupBuyGroup[], query: string) {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  const hits: Array<{
+    groupId: string
+    groupName: string
+    status: string
+    costId: string
+    orderNumber: string
+    jpyTotal: number
+  }> = []
+  for (const group of groups) {
+    for (const cost of group.purchaseCosts || []) {
+      const orderNumber = String(cost.orderNumber || '').trim()
+      if (!orderNumber || !orderNumber.toLowerCase().includes(q)) continue
+      hits.push({
+        groupId: group.id,
+        groupName: group.name,
+        status: group.status,
+        costId: cost.id,
+        orderNumber,
+        jpyTotal: Number(cost.jpyTotal) || 0,
+      })
+    }
+  }
+  return hits
 }
 
 export function groupUnpaidCount(g: GroupBuyGroup): number {

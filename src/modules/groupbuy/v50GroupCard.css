@@ -396,6 +396,82 @@
   color: #7c6bb0;
 }
 
+.v50-cost-search-results {
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(156, 168, 152, 0.48);
+  border-radius: 0.65rem;
+  background: #f4f6f1;
+}
+
+.v50-cost-search-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #5c6b5b;
+}
+
+.v50-cost-search-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.v50-cost-search-hit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.55rem;
+  border: 1px solid rgba(168, 178, 164, 0.55);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.78rem;
+  color: #3e4a3d;
+  cursor: pointer;
+}
+
+.v50-cost-search-hit strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.v50-cost-search-hit:hover {
+  border-color: #7d8a7c;
+  background: #eef1eb;
+}
+
+.v50-group-cost-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.v50-group-cost-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgba(168, 178, 164, 0.55);
+  border-radius: 0.55rem;
+  background: #fff;
+  color: #5c6b5b;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.v50-group-cost-toggle:hover {
+  background: #eef1eb;
+}
+
+.v50-group-cost-panel.is-collapsed .v50-group-cost-list,
+.v50-group-cost-panel.is-collapsed .v50-group-cost-footer {
+  display: none;
+}
+
+.v50-group-cost-panel.is-collapsed .v50-group-cost-toggle svg {
+  transform: rotate(-90deg);
+}
+
 .v50-group-cost-panel {
   width: 100%;
   padding: 0.45rem 0.85rem 0.5rem;
@@ -562,6 +638,23 @@
   flex-shrink: 0;
 }
 
+.v50-group-cost-field--order-number {
+  flex-shrink: 0;
+}
+
+.v50-group-cost-field--order-number .v50-group-cost-input-wrap {
+  min-width: 10.5rem;
+  flex-shrink: 0;
+}
+
+.v50-group-cost-field--order-number .v50-group-cost-input {
+  flex: 1 1 auto;
+  min-width: 9.5rem;
+  width: 9.5rem;
+  max-width: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .v50-group-cost-field--logistics {
   flex-shrink: 0;
 }
@@ -704,6 +797,18 @@
     min-width: 0;
     width: calc(9.5ch + 2rem);
     max-width: calc(9.5ch + 2rem);
+  }
+
+  .v50-group-cost-field--order-number .v50-group-cost-input-wrap {
+    min-width: 0;
+    width: calc(12ch + 1.1rem);
+    max-width: min(100%, calc(12ch + 1.1rem));
+  }
+
+  .v50-group-cost-field--order-number .v50-group-cost-input {
+    width: 12ch;
+    min-width: 8ch;
+    max-width: 12ch;
   }
 
   .v50-group-cost-field--logistics .v50-group-cost-input-wrap {

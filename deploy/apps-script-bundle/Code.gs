@@ -135,9 +135,6 @@ function heinaClearAdminFail_() {
 }
 
 function heinaAdminLogin_(pl) {
-  if (heinaAdminLocked_()) {
-    return { ok: false, message: '嘗試次數過多，請約 15 分鐘後再試' };
-  }
   var expected = heinaAdminPassword_();
   if (!String(expected).trim()) {
     return {
@@ -147,21 +144,25 @@ function heinaAdminLogin_(pl) {
     };
   }
   var given = pl && pl.password != null ? String(pl.password) : '';
-  if (!given || !heinaSafeEqual_(given, expected)) {
-    var n = heinaNoteAdminFail_();
-    var left = Math.max(0, 5 - n);
+  // Correct credentials always win. A stranger's failed guesses must never lock the owner out.
+  if (given && heinaSafeEqual_(given, expected)) {
+    heinaClearAdminFail_();
+    var issued = heinaIssueAdminToken_(12);
     return {
-      ok: false,
-      message: left ? '密碼錯誤（尚可嘗試 ' + left + ' 次）' : '密碼錯誤次數過多，已鎖定約 15 分鐘'
+      ok: true,
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+      sessionHours: issued.sessionHours
     };
   }
-  heinaClearAdminFail_();
-  var issued = heinaIssueAdminToken_(12);
+  if (heinaAdminLocked_()) {
+    return { ok: false, message: '嘗試次數過多，請約 15 分鐘後再試' };
+  }
+  var n = heinaNoteAdminFail_();
+  var left = Math.max(0, 5 - n);
   return {
-    ok: true,
-    token: issued.token,
-    expiresAt: issued.expiresAt,
-    sessionHours: issued.sessionHours
+    ok: false,
+    message: left ? '密碼錯誤（尚可嘗試 ' + left + ' 次）' : '密碼錯誤次數過多，已鎖定約 15 分鐘'
   };
 }
 
@@ -692,6 +693,9 @@ function gb_syncPortalLookupCustomers_(pl) {
 function gb_customerLookup_(pl) {
   var rawQ = pl && pl.customerName ? String(pl.customerName).trim() : '';
   var lookupPin = pl && pl.lookupPin != null ? String(pl.lookupPin) : '';
+  if (rawQ && gb_authThrottleLocked_('lookup', rawQ)) {
+    return { portalConfig: {}, matches: [], lookupError: '嘗試次數過多，請約 15 分鐘後再試' };
+  }
   var all = gb_fetchAllData_();
   var portalConfig = all.portalConfig;
   var matches = [];
@@ -749,7 +753,12 @@ function gb_customerLookup_(pl) {
       lastAuthMsg = auth.message;
     }
   }
-  if (!authOkAny) return { portalConfig: portalConfig, matches: matches, lookupError: lastAuthMsg, dataRevision: all.dataRevision };
+  if (!authOkAny) {
+    var lookupState = gb_authThrottleFail_('lookup', rawQ, 8);
+    if (Number(lookupState.until || 0) > Date.now()) lastAuthMsg = '嘗試次數過多，請約 15 分鐘後再試';
+    return { portalConfig: portalConfig, matches: matches, lookupError: lastAuthMsg, dataRevision: all.dataRevision };
+  }
+  gb_authThrottleClear_('lookup', rawQ);
 
   for (gi = 0; gi < groups.length; gi++) {
     g = groups[gi];
@@ -789,7 +798,7 @@ function gb_publicRevision_() {
 function gb_emptyGroupRow_(g, exportDate) {
   return [
     '', '', '', '', '', '', '', '', '', '', '', '',
-    g.officialShipDate, g.name, g.id, g.status || '已登記',
+    gb_shipDateText_(g.officialShipDate), g.name, g.id, g.status || '已登記',
     g.closingDate, g.saleEndDate, g.purchaseDate || '', g.jpyAmount,
     g.orderId, g.logisticsId, g.purchaseLink || '', '', '', exportDate
   ];
@@ -798,7 +807,7 @@ function gb_emptyGroupRow_(g, exportDate) {
 function gb_orderStubRow_(g, o, exportDate) {
   return [
     o.customerName, '', '', '', '', '', o.totalTwd, o.deposit, o.domesticShip, o.intlShip,
-    o.balance, o.paymentStatus, g.officialShipDate, g.name, g.id, g.status || '已登記',
+    o.balance, o.paymentStatus, gb_shipDateText_(g.officialShipDate), g.name, g.id, g.status || '已登記',
     g.closingDate, g.saleEndDate, g.purchaseDate || '', g.jpyAmount,
     g.orderId, g.logisticsId, g.purchaseLink || '', o.id, o.paymentInfo || '', exportDate
   ];
@@ -834,7 +843,7 @@ function gb_buildFlatRows_(groups, options) {
         rows.push([
           o.customerName, it.name, qty, jpy, qty * jpy, Number(it.twd) || 0,
           o.totalTwd, o.deposit, o.domesticShip, o.intlShip, o.balance, o.paymentStatus,
-          g.officialShipDate, g.name, g.id, g.status || '已登記',
+          gb_shipDateText_(g.officialShipDate), g.name, g.id, g.status || '已登記',
           g.closingDate, g.saleEndDate, g.purchaseDate || '', g.jpyAmount,
           g.orderId, g.logisticsId, g.purchaseLink || '', o.id, o.paymentInfo || '', exportDate
         ]);
@@ -867,6 +876,18 @@ function gb_writeJournalSheet_(bankJournal) {
   }
   if (jRows.length > 0) sheet.getRange(2, 1, jRows.length, 7).setValues(jRows);
   if (oldCount > jRows.length) sheet.getRange(2 + jRows.length, 1, oldCount - jRows.length, 7).clearContent();
+}
+
+function gb_shipDateText_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  return value == null ? '' : String(value);
+}
+
+function gb_ensureShipDateTextFormat_(sheet, startRow, rowCount) {
+  if (!sheet || !rowCount || rowCount < 1) return;
+  sheet.getRange(startRow, GB_COL.SHIP_DATE + 1, rowCount, 1).setNumberFormat('@');
 }
 
 function gb_upsertJournalRows_(existing, incoming) {
@@ -1396,13 +1417,17 @@ function gb_verifyBankViewerAccess_(pl) {
   } else if (!customerName) {
     nextCfg = gb_appendBankViewerLog_(cfg, { customerName: '', ok: false, reason: 'empty_name' });
     result = { ok: false, message: '請填寫你在群裡的名字。' };
+  } else if (gb_authThrottleLocked_('bank', customerName)) {
+    return { ok: false, message: '嘗試次數過多，請約 15 分鐘後再試。' };
   } else if (!String(want).trim()) {
     nextCfg = gb_appendBankViewerLog_(cfg, { customerName: customerName, ok: false, reason: 'empty_password' });
     result = { ok: false, message: '團主尚未設定查詢密碼，請私訊索取。' };
   } else if (!heinaSafeEqual_(accessPassword, want)) {
+    gb_authThrottleFail_('bank', customerName, 5);
     nextCfg = gb_appendBankViewerLog_(cfg, { customerName: customerName, ok: false, reason: 'bad_password' });
     result = { ok: false, message: '查詢密碼錯誤。請向團主索取最新密碼後再試。' };
   } else {
+    gb_authThrottleClear_('bank', customerName);
     nextCfg = gb_appendBankViewerLog_(cfg, { customerName: customerName, ok: true, reason: 'ok' });
     result = {
       ok: true,
@@ -1579,6 +1604,41 @@ function gb_findPortalLookupCustomer_(name, list) {
   return null;
 }
 
+function gb_authThrottleKey_(scope, name) {
+  var raw = String(scope || '') + '|' + String(name || '').trim().toLowerCase();
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw);
+  var hex = '';
+  for (var i = 0; i < digest.length; i++) hex += ('0' + (digest[i] & 255).toString(16)).slice(-2);
+  return 'heina_auth_' + hex.slice(0, 40);
+}
+
+function gb_authThrottleState_(scope, name) {
+  try {
+    var raw = CacheService.getScriptCache().get(gb_authThrottleKey_(scope, name));
+    var state = raw ? JSON.parse(raw) : null;
+    if (state && typeof state === 'object') return state;
+  } catch (e) {}
+  return { fails: 0, until: 0 };
+}
+
+function gb_authThrottleLocked_(scope, name) {
+  var state = gb_authThrottleState_(scope, name);
+  return Number(state.until || 0) > Date.now();
+}
+
+function gb_authThrottleFail_(scope, name, limit) {
+  var state = gb_authThrottleState_(scope, name);
+  if (Number(state.until || 0) > Date.now()) return state;
+  state.fails = Number(state.fails || 0) + 1;
+  if (state.fails >= (Number(limit) || 8)) state.until = Date.now() + 15 * 60 * 1000;
+  CacheService.getScriptCache().put(gb_authThrottleKey_(scope, name), JSON.stringify(state), 900);
+  return state;
+}
+
+function gb_authThrottleClear_(scope, name) {
+  CacheService.getScriptCache().remove(gb_authThrottleKey_(scope, name));
+}
+
 function gb_verifyLookupPin_(name, pin, list) {
   var normalized = String(pin || '').replace(/\D/g, '').slice(0, 4);
   if (!/^\d{4}$/.test(normalized)) return { ok: false, message: '請輸入 4 位數查單密碼' };
@@ -1603,9 +1663,16 @@ function gb_customerBalanceMemos_(pl) {
   var name = pl && pl.customerName ? String(pl.customerName).trim() : '';
   var pin = pl && pl.lookupPin != null ? String(pl.lookupPin) : '';
   if (!name) return { ok: false, message: '請輸入查詢名稱', memos: [] };
+  if (gb_authThrottleLocked_('memos', name)) {
+    return { ok: false, message: '嘗試次數過多，請約 15 分鐘後再試', memos: [] };
+  }
   var all = gb_fetchAllData_();
   var auth = gb_verifyLookupPin_(name, pin, all.portalLookupCustomers || []);
-  if (!auth.ok) return { ok: false, message: auth.message || '查單密碼錯誤', memos: [] };
+  if (!auth.ok) {
+    gb_authThrottleFail_('memos', name, 8);
+    return { ok: false, message: auth.message || '查單密碼錯誤', memos: [] };
+  }
+  gb_authThrottleClear_('memos', name);
   var want = name.replace(/\s+/g, '').toLowerCase();
   var memos = [];
   var list = all.customerBalanceMemos || [];
@@ -1648,6 +1715,9 @@ function gb_changeLookupPin_(pl) {
   var newPin = pl && pl.newPin != null ? String(pl.newPin) : '';
   var confirmPin = pl && pl.confirmPin != null ? String(pl.confirmPin) : '';
   if (!name) return { ok: false, message: '請輸入查詢名稱' };
+  if (gb_authThrottleLocked_('change_pin', name)) {
+    return { ok: false, message: '嘗試次數過多，請約 15 分鐘後再試' };
+  }
   var cur = currentPin.replace(/\D/g, '').slice(0, 4);
   var next = newPin.replace(/\D/g, '').slice(0, 4);
   var confirm = confirmPin.replace(/\D/g, '').slice(0, 4);
@@ -1656,7 +1726,11 @@ function gb_changeLookupPin_(pl) {
   if (next !== confirm) return { ok: false, message: '兩次新密碼不一致' };
   if (next === cur) return { ok: false, message: '新密碼不可與目前密碼相同' };
   var auth = gb_verifyLookupPin_(name, cur, all.portalLookupCustomers || []);
-  if (!auth.ok) return { ok: false, message: auth.message || '目前密碼錯誤' };
+  if (!auth.ok) {
+    gb_authThrottleFail_('change_pin', name, 8);
+    return { ok: false, message: auth.message || '目前密碼錯誤' };
+  }
+  gb_authThrottleClear_('change_pin', name);
   var nextList = gb_upsertPortalLookupPin_(all.portalLookupCustomers || [], name, next);
   var ss = SpreadsheetApp.getActive();
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
@@ -1741,13 +1815,23 @@ function gb_submitPaymentReportLocked_(pl) {
   var totalAmount = Math.round(Number(pl && pl.totalAmount) || 0);
   var orderIds = pl && pl.orderIds ? pl.orderIds : [];
   var clientRequestId = pl && pl.clientRequestId ? String(pl.clientRequestId).trim() : '';
+  var lookupPin = pl && pl.lookupPin != null ? String(pl.lookupPin) : '';
   if (!customerName) return { ok: false, message: '請先查詢訂單' };
   if (!remittanceDate) return { ok: false, message: '請填寫匯款日期' };
   if (!/^\d{5}$/.test(lastFive)) return { ok: false, message: '後五碼需為 5 位數字' };
   if (totalAmount <= 0) return { ok: false, message: '請填寫匯款總金額' };
   if (!orderIds.length) return { ok: false, message: '請至少勾選一筆待付訂單' };
+  if (gb_authThrottleLocked_('submit_report', customerName)) {
+    return { ok: false, message: '查單驗證嘗試次數過多，請約 15 分鐘後再試' };
+  }
 
   var all = gb_fetchAllData_();
+  var lookupAuth = gb_verifyLookupPin_(customerName, lookupPin, all.portalLookupCustomers || []);
+  if (!lookupAuth.ok) {
+    gb_authThrottleFail_('submit_report', customerName, 8);
+    return { ok: false, message: lookupAuth.message || '查單密碼錯誤，請重新查單後再送出' };
+  }
+  gb_authThrottleClear_('submit_report', customerName);
   var groups = all.groups || [];
   var reports = all.paymentReports || [];
   var wantedKey = orderIds.map(String).sort().join('|');
@@ -2423,7 +2507,10 @@ function gb_opSet_(id, obj) {
 function gb_writeOrderSheetSafe_(sheet, rows) {
   var last = sheet.getLastRow();
   var oldCount = Math.max(0, last - 1);
-  if (rows && rows.length) sheet.getRange(2, 1, rows.length, GB_COLS).setValues(rows);
+  if (rows && rows.length) {
+    gb_ensureShipDateTextFormat_(sheet, 2, rows.length);
+    sheet.getRange(2, 1, rows.length, GB_COLS).setValues(rows);
+  }
   if (oldCount > (rows ? rows.length : 0)) {
     sheet.getRange(2 + (rows ? rows.length : 0), 1, oldCount - (rows ? rows.length : 0), GB_COLS).clearContent();
   }
@@ -2445,18 +2532,21 @@ function gb_replaceGroupRows_(sheet, groupId, newRows, opId) {
   gb_opSet_(opId + ':' + groupId, { status: 'backup', rowCount: backup.length });
   if (start < 0) {
     if (!newRows.length) return;
+    gb_ensureShipDateTextFormat_(sheet, existing.length + 2, newRows.length);
     sheet.getRange(existing.length + 2, 1, newRows.length, GB_COLS).setValues(newRows);
     return;
   }
   var oldLen = end - start + 1;
   var sheetStart = start + 2;
   if (newRows.length === oldLen) {
+    gb_ensureShipDateTextFormat_(sheet, sheetStart, newRows.length);
     sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
     return;
   }
   sheet.deleteRows(sheetStart, oldLen);
   if (newRows.length) {
     sheet.insertRows(sheetStart, newRows.length);
+    gb_ensureShipDateTextFormat_(sheet, sheetStart, newRows.length);
     sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
   }
 }
@@ -2515,6 +2605,7 @@ function gb_replaceOrderRows_(sheet, orderId, newRows, opId) {
   gb_opSet_(opId + ':order:' + orderId, { status: 'backup', rowCount: backup.length });
   if (!indexes.length) {
     if (!newRows.length) return { rows: 0 };
+    gb_ensureShipDateTextFormat_(sheet, existing.length + 2, newRows.length);
     sheet.getRange(existing.length + 2, 1, newRows.length, GB_COLS).setValues(newRows);
     return { rows: newRows.length };
   }
@@ -2522,12 +2613,14 @@ function gb_replaceOrderRows_(sheet, orderId, newRows, opId) {
   if (!contiguous) throw new Error('訂單列不連續，已停止寫入以免影響其他訂單');
   var sheetStart = indexes[0] + 2;
   if (newRows.length === indexes.length) {
+    gb_ensureShipDateTextFormat_(sheet, sheetStart, newRows.length);
     sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
     return { rows: newRows.length };
   }
   sheet.deleteRows(sheetStart, indexes.length);
   if (newRows.length) {
     sheet.insertRows(sheetStart, newRows.length);
+    gb_ensureShipDateTextFormat_(sheet, sheetStart, newRows.length);
     sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
   }
   return { rows: newRows.length };
@@ -2555,6 +2648,7 @@ function gb_patchSharedGroupColumns_(sheet, group) {
       if (String(existing[i][GB_COL.SHIP_DATE + c] == null ? '' : existing[i][GB_COL.SHIP_DATE + c]) !== String(values[c] == null ? '' : values[c])) same = false;
     }
     if (same) continue;
+    gb_ensureShipDateTextFormat_(sheet, i + 2, 1);
     sheet.getRange(i + 2, GB_COL.SHIP_DATE + 1, 1, values.length).setValues([values]);
     n++;
   }

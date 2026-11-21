@@ -213,6 +213,7 @@ export function CustomerPaymentReportPanel({
         action: 'submitPaymentReport',
         payload: {
           customerName: customerName.trim(),
+          lookupPin,
           remittanceDate: paymentDate,
           lastFive: lastFive.trim(),
           totalAmount: totalValue,

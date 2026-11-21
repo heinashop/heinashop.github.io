@@ -26,7 +26,11 @@ type ImportProps = {
   groups: GroupBuyGroup[]
   onClose: () => void
   onImport: (
-    updates: { groupId: string; orders: GroupBuyGroup['orders'] }[],
+    updates: {
+      groupId: string
+      orders: GroupBuyGroup['orders']
+      groupPatch?: Partial<GroupBuyGroup>
+    }[],
     summary: string,
   ) => void
 }
@@ -108,13 +112,18 @@ export function V50GroupExcelModal(props: Props) {
   function confirmImport() {
     if (props.mode !== 'import' || !preview) return
     const updates = preview.plans
-      .filter((p) => p.groupId && (p.added > 0 || p.updated > 0))
-      .map((p) => ({ groupId: p.groupId, orders: p.orders }))
+      .filter((p) => p.groupId && (p.added > 0 || p.updated > 0 || p.groupPatch))
+      .map((p) => ({
+        groupId: p.groupId,
+        orders: p.orders,
+        groupPatch: p.groupPatch,
+      }))
     if (!updates.length) {
       setMessage('沒有可匯入的客訂')
       return
     }
-    const summary = `已匯入：新增 ${preview.addable} 筆${preview.updatable ? `、更新 ${preview.updatable} 筆` : ''}${preview.failed ? `、失敗 ${preview.failed} 筆` : ''}`
+    const infoCount = preview.plans.filter((p) => p.groupPatch).length
+    const summary = `已匯入：新增 ${preview.addable} 筆${preview.updatable ? `、更新 ${preview.updatable} 筆` : ''}${infoCount ? `、開團資訊 ${infoCount} 筆` : ''}${preview.failed ? `、失敗 ${preview.failed} 筆` : ''}`
     props.onImport(updates, summary)
     props.onClose()
   }
@@ -133,7 +142,7 @@ export function V50GroupExcelModal(props: Props) {
       ? '勾選要備份的團務（含已結束）。每團一工作表：團務主檔＋客訂明細；台幣售價為數量×單價。僅供本機備份，請勿用於匯入。'
       : props.mode === 'export'
         ? '選擇要匯出的團務（不含已結束）。同一客戶多品項會分多列；續列名字請留空。付款狀態寫日期與後五碼，例如 11/20 #66666，沒有則空白。'
-        : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同，可一次匯入多團。確認後才會寫入。'
+        : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同，可一次匯入多團；若有團務主檔列（團務名稱／狀態／日期／信用卡／訂單／物流編號），也會一併更新開團資訊。確認後才會寫入。'
 
   const emptyText =
     props.mode === 'exportFull'
@@ -238,7 +247,7 @@ export function V50GroupExcelModal(props: Props) {
               <button
                 type="button"
                 className="v50-excel-btn v50-excel-btn--primary"
-                disabled={busy || !preview || preview.addable + preview.updatable === 0}
+                disabled={busy || !preview || (preview.addable + preview.updatable === 0 && !preview.plans.some((p) => p.groupPatch))}
                 onClick={confirmImport}
               >
                 確認匯入

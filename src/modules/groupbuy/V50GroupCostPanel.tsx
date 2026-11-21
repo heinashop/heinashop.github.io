@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, Plus, Trash2 } from 'lucide-react'
 import type { GroupBuyGroup, GroupBuyPurchaseCost } from '../../api/types'
 import { Btn } from '../../components/ui'
 
 export type GroupCostRowDraft = {
   id: string
+  orderNumber: string
   jpyCost: string
   jpyShipping: string
   jpyTotal: string
@@ -24,6 +25,7 @@ function newRowId() {
 function emptyRow(): GroupCostRowDraft {
   return {
     id: newRowId(),
+    orderNumber: '',
     jpyCost: '',
     jpyShipping: '',
     jpyTotal: '',
@@ -49,6 +51,7 @@ function rowFromCost(entry: GroupBuyPurchaseCost): GroupCostRowDraft {
   const jpyShipping = strField(entry.jpyShipping)
   return {
     id: entry.id || newRowId(),
+    orderNumber: entry.orderNumber != null ? String(entry.orderNumber) : '',
     jpyCost,
     jpyShipping,
     jpyTotal: strField(entry.jpyTotal) || calcJpyTotal(jpyCost, jpyShipping),
@@ -67,6 +70,7 @@ function legacyRowFromGroup(group: GroupBuyGroup): GroupCostRowDraft | null {
   if (!jpyCost && !jpyShipping && !twdCost && !weight && !logisticsId) return null
   return {
     id: newRowId(),
+    orderNumber: '',
     jpyCost,
     jpyShipping,
     jpyTotal: strField(group.jpyTotal) || calcJpyTotal(jpyCost, jpyShipping),
@@ -101,6 +105,7 @@ function rowToCost(row: GroupCostRowDraft): GroupBuyPurchaseCost {
   const jpyTotal = resolvedJpyTotal(row)
   return {
     id: row.id,
+    orderNumber: row.orderNumber.trim(),
     jpyCost: parseNum(row.jpyCost),
     jpyShipping: parseNum(row.jpyShipping),
     jpyTotal: parseNum(jpyTotal),
@@ -112,6 +117,7 @@ function rowToCost(row: GroupCostRowDraft): GroupBuyPurchaseCost {
 
 function isRowEmpty(row: GroupCostRowDraft) {
   return (
+    !row.orderNumber.trim() &&
     !row.jpyCost.trim() &&
     !row.jpyShipping.trim() &&
     !row.twdCost.trim() &&
@@ -129,6 +135,7 @@ type Props = {
 export function V50GroupCostPanel({ group, saving, onSave }: Props) {
   const [rows, setRows] = useState<GroupCostRowDraft[]>(() => toRows(group))
   const [dirty, setDirty] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     setRows(toRows(group))
@@ -172,16 +179,27 @@ export function V50GroupCostPanel({ group, saving, onSave }: Props) {
   }
 
   return (
-    <div className="v50-group-cost-panel mb-4">
+    <div className={'v50-group-cost-panel mb-4' + (collapsed ? ' is-collapsed' : '')}>
       <div className="v50-group-cost-panel-head">
         <div>
           <p className="v50-group-cost-title">下單成本</p>
           <p className="v50-group-cost-hint">同一團可分多次下單。每筆金額分開記，團務搜尋輸入刷卡金額就能找到這團。</p>
         </div>
-        <Btn variant="secondary" className="!min-h-9 !px-3 !py-2 text-sm" type="button" onClick={addRow}>
-          <Plus className="h-4 w-4" />
-          新增下單筆
-        </Btn>
+        <div className="v50-group-cost-actions">
+          <button
+            type="button"
+            className="v50-group-cost-toggle"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden />
+            {collapsed ? '展開' : '收合'}
+          </button>
+          <Btn variant="secondary" className="!min-h-9 !px-3 !py-2 text-sm" type="button" onClick={addRow}>
+            <Plus className="h-4 w-4" />
+            新增下單筆
+          </Btn>
+        </div>
       </div>
 
       <div className="v50-group-cost-list">
@@ -197,6 +215,20 @@ export function V50GroupCostPanel({ group, saving, onSave }: Props) {
             </div>
 
             <div className="v50-group-cost-fields">
+              <label className="v50-group-cost-field v50-group-cost-field--order-number">
+                <span className="v50-group-cost-label">訂單編號</span>
+                <div className="v50-group-cost-input-wrap v50-group-cost-input-wrap--text">
+                  <input
+                    className="v50-group-cost-input v50-group-cost-input--text"
+                    type="text"
+                    placeholder="採購單號"
+                    maxLength={30}
+                    size={12}
+                    value={row.orderNumber}
+                    onChange={(e) => patchRow(row.id, 'orderNumber', e.target.value)}
+                  />
+                </div>
+              </label>
               <label className="v50-group-cost-field v50-group-cost-field--amount v50-group-cost-field--digits6">
                 <span className="v50-group-cost-label">日幣成本</span>
                 <div className="v50-group-cost-input-wrap">

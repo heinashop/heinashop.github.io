@@ -93,6 +93,20 @@ function shouldTryJsonp(err: unknown): boolean {
   return /failed to fetch|network|cors|load failed/i.test(msg)
 }
 
+/**
+ * JSONP puts the request into the URL. Only public, read-only actions are
+ * allowed to fall back to it; credentials, PINs and payment data must use POST.
+ */
+export function canUseJsonp(req: UnifiedRequest): boolean {
+  if (req.adminToken) return false
+  if (req.module !== 'groupbuy') return false
+  return (
+    req.action === 'publicRevision' ||
+    req.action === 'publicBootstrap' ||
+    req.action === 'listPublicGroups'
+  )
+}
+
 const APP_DATA_MUTATIONS = new Set([
   'saveAppData',
   'saveBankJournal',
@@ -192,7 +206,7 @@ export function createGasHttpClient(): UnifiedClient {
           try {
             data = await postCall<T>(url, bodyReq)
           } catch (err) {
-            if (!shouldTryJsonp(err)) throw err
+            if (!canUseJsonp(bodyReq) || !shouldTryJsonp(err)) throw err
             data = await jsonpCall<T>(url, bodyReq)
           }
           if (readApp) {

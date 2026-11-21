@@ -33,6 +33,7 @@ import {
   localTodayIso,
   normalizeGroupStatus,
   matchesV50GroupSearch,
+  v50PurchaseCostSearchHits,
   sortGroups,
   GROUP_SORT_OPTIONS,
   countShippingQueueRows,
@@ -99,7 +100,7 @@ function formToGroup(values: GroupSetupFormValues, existing?: GroupBuyGroup): Gr
     portalListed: existing?.portalListed !== false,
     closingDate: formatYmd(values.closingDate) || today,
     saleEndDate: formatYmd(values.saleEndDate) || today,
-    officialShipDate: formatYmd(values.officialShipDate),
+    officialShipDate: String(values.officialShipDate || '').trim(),
     purchaseDate: formatYmd(values.purchaseDate),
     creditCard: values.cardPayNote.trim(),
     jpyAmount: Number(values.jpyAmountTotal) || 0,
@@ -324,6 +325,11 @@ export function V50GroupOpsPage() {
     return sortGroups(list, groupSort)
   }, [opsGroups, search, groupStatusTab, groupSort])
 
+  const costSearchHits = useMemo(
+    () => v50PurchaseCostSearchHits(opsGroups, search),
+    [opsGroups, search],
+  )
+
   const viewGroup = viewGroupId ? groups.find((g) => g.id === viewGroupId) : null
   const daigouOrders = useDaigouStore((s) => s.orders)
   const shipments = useDaigouStore((s) => s.shipments)
@@ -367,7 +373,7 @@ export function V50GroupOpsPage() {
           ? {
               ...g,
               purchaseCosts: patch.purchaseCosts,
-              logisticsId: logisticsId || g.logisticsId,
+              logisticsId: patch.purchaseCosts.length ? logisticsId || g.logisticsId : '',
             }
           : g,
       )
@@ -454,15 +460,18 @@ export function V50GroupOpsPage() {
   }
 
   async function applyExcelImport(
-    updates: { groupId: string; orders: GroupBuyOrder[] }[],
+    updates: { groupId: string; orders: GroupBuyOrder[]; groupPatch?: Partial<GroupBuyGroup> }[],
     summary: string,
   ) {
-    const byId = new Map(updates.map((u) => [u.groupId, u.orders]))
-    const next = groups.map((g) => (byId.has(g.id) ? { ...g, orders: byId.get(g.id)! } : g))
+    const byId = new Map(updates.map((u) => [u.groupId, u]))
+    const next = groups.map((g) => {
+      const update = byId.get(g.id)
+      return update ? { ...g, ...(update.groupPatch || {}), orders: update.orders } : g
+    })
     for (const g of next) {
-      const orders = byId.get(g.id)
-      if (!orders) continue
-      for (const o of orders) syncV50OrderToDaigou(g, o)
+      const update = byId.get(g.id)
+      if (!update) continue
+      for (const o of update.orders) syncV50OrderToDaigou(g, o)
     }
     const ok = await persist(next)
     if (!ok) return
@@ -715,7 +724,7 @@ export function V50GroupOpsPage() {
           <div className="v50-group-toolbar">
             <input
               className="heina-input gb-search"
-              placeholder="搜尋團名、訂單編號、物流編號、刷卡金額…"
+              placeholder="搜尋團名、訂單編號、採購單號、物流編號、刷卡金額…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -734,6 +743,28 @@ export function V50GroupOpsPage() {
               </select>
             </label>
           </div>
+          {costSearchHits.length > 0 ? (
+            <div className="v50-cost-search-results" aria-label="下單成本搜尋結果">
+              <p className="v50-cost-search-title">下單成本符合「{search.trim()}」</p>
+              <div className="v50-cost-search-list">
+                {costSearchHits.map((hit) => (
+                  <button
+                    key={`${hit.groupId}:${hit.costId}`}
+                    type="button"
+                    className="v50-cost-search-hit"
+                    onClick={() => {
+                      setGroupStatusTab(normalizeGroupStatus(hit.status))
+                      setViewGroupId(hit.groupId)
+                    }}
+                  >
+                    <strong>{hit.orderNumber}</strong>
+                    <span>{hit.groupName}</span>
+                    <span>¥{hit.jpyTotal.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {filteredGroups.length === 0 ? (
             <p className="text-body text-ds-text-muted">
               {search.trim() ? `找不到符合「${search.trim()}」的團務。` : '此分類尚無團務。'}

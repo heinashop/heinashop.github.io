@@ -569,6 +569,52 @@ export type V50GroupImportPlan = {
   failed: number
   warnings: string[]
   orders: GroupBuyOrder[]
+  groupPatch?: Partial<GroupBuyGroup>
+}
+
+function parseGroupInfoRow(ws: XLSX.WorkSheet): Partial<GroupBuyGroup> | null {
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
+  const headerIndex = aoa.findIndex((line) => {
+    const cells = (line || []).map((c) => norm(String(c ?? '')))
+    return cells.some((c) => c === '團務名稱' || c === '團務id' || c === '結單日')
+  })
+  if (headerIndex < 0) return null
+  const headers = (aoa[headerIndex] || []).map((c) => String(c ?? '').trim())
+  const values = aoa[headerIndex + 1] || []
+  const valueOf = (...aliases: string[]) => {
+    for (const alias of aliases) {
+      const idx = headers.findIndex((h) => norm(h) === norm(alias))
+      if (idx >= 0) {
+        const value = values[idx]
+        if (value !== '' && value != null) return String(value).trim()
+      }
+    }
+    return ''
+  }
+  const name = valueOf('團務名稱')
+  const statusText = valueOf('團務狀態', '狀態')
+  const patch: Partial<GroupBuyGroup> = {}
+  if (name) patch.name = name
+  if (statusText) patch.status = normalizeGroupStatus(statusText)
+  const closingDate = valueOf('結單日', '結單日期')
+  const saleEndDate = valueOf('結束販賣日')
+  const purchaseDate = valueOf('購買日', '購買日期')
+  const officialShipDate = valueOf('官方出貨日')
+  const creditCard = valueOf('信用卡資訊')
+  const orderId = valueOf('訂單編號')
+  const logisticsId = valueOf('物流編號')
+  const purchaseLink = valueOf('網站連結')
+  const remarks = valueOf('備註')
+  if (closingDate) patch.closingDate = closingDate
+  if (saleEndDate) patch.saleEndDate = saleEndDate
+  if (purchaseDate) patch.purchaseDate = purchaseDate
+  if (officialShipDate) patch.officialShipDate = officialShipDate
+  if (creditCard) patch.creditCard = creditCard
+  if (orderId) patch.orderId = orderId
+  if (logisticsId) patch.logisticsId = logisticsId
+  if (purchaseLink) patch.purchaseLink = purchaseLink
+  if (remarks) patch.remarks = remarks
+  return Object.keys(patch).length ? patch : null
 }
 
 export type V50WorkbookImportPreview = {
@@ -608,6 +654,7 @@ export function previewV50WorkbookImport(
   for (const sheetName of dataSheets) {
     const ws = wb.Sheets[sheetName]
     const parsed = parseRowsToBlocks(sheetToRowRecords(ws))
+    const groupPatch = parseGroupInfoRow(ws) || undefined
     let group = matchImportGroup(sheetName, groups)
     if (!group && loneGroup && dataSheets.length === 1) {
       group = loneGroup
@@ -639,6 +686,7 @@ export function previewV50WorkbookImport(
       failed: rowFailed + applied.skipped,
       warnings: [...parsed.warnings, ...applied.warnings],
       orders: applied.orders,
+      groupPatch,
     })
     warnings.push(...parsed.warnings, ...applied.warnings)
   }

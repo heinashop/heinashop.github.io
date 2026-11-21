@@ -1,6 +1,6 @@
 Heina Suite — GitHub Pages 前端 + Apps Script API
 ==================================================
-建置時間：2026-11-21T19:10:47.466Z
+建置時間：2026-11-21T23:28:08.643Z
 
 顧客網站：https://heinashop.github.io/
 （GitHub Pages，來源選 GitHub Actions。私人倉庫需要付費方案。）

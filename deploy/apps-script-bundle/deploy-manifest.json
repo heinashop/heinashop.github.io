@@ -1,17 +1,17 @@
 {
-  "builtAt": "2026-11-21T19:10:47.466Z",
+  "builtAt": "2026-11-21T23:28:08.643Z",
   "package": "heina-suite",
   "command": "npm run deploy",
   "files": {
     "index.html": {
       "bytes": 794,
       "sha256Prefix": "9a5e0cb1b85bcc06",
-      "mtime": "2026-11-21T19:10:47.437Z"
+      "mtime": "2026-11-21T23:28:08.614Z"
     },
     "Code.gs": {
-      "bytes": 157202,
-      "sha256Prefix": "178be95f959002e9",
-      "mtime": "2026-11-21T19:10:47.434Z"
+      "bytes": 161469,
+      "sha256Prefix": "62302056c950a210",
+      "mtime": "2026-11-21T23:28:08.611Z"
     }
   },
   "checks": [
