@@ -170,7 +170,7 @@ export function CustomerPortalPage() {
                         const img = products.find((p) => p.id === it.productId)?.imageUrl
                         return (
                           <div key={i} className="flex gap-3">
-                            {img ? <img src={img} alt="" className="h-16 w-16 rounded-lg object-cover" /> : null}
+                            {img ? <img loading="lazy" decoding="async" src={img} alt="" className="h-16 w-16 rounded-lg object-cover" /> : null}
                             <div className="text-sm">
                               <p className="font-medium text-zinc-900">{it.name}</p>
                               <p className="text-xs text-zinc-500">×{it.qty}</p>

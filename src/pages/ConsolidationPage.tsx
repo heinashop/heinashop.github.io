@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Boxes, Plus, RefreshCw } from 'lucide-react'
 import { Btn, Empty, PageHeader } from '../components/ui'
 import { PageLayout } from '../components/app/PageLayout'
 import { useApi } from '../context/useApi'
 import { useDaigouStore } from '../daigou/store'
+import { isSheetEditing, mergeGroupList } from '../sync/sheetSync'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
+import { applySavedRevisions, buildGroupSavePayload, type SaveResult } from '../sync/groupSave'
 import type {
   ConsolidationShipment,
   GroupBuyAppData,
   GroupBuyGroup,
-  GroupBuySavePayload,
 } from '../api/types'
 import {
   createConsolidationShipment,
@@ -37,6 +39,7 @@ export function ConsolidationPage() {
 
   const [loading, setLoading] = useState(true)
   const [groups, setGroups] = useState<GroupBuyGroup[]>([])
+  const baseGroupsRef = useRef<GroupBuyGroup[]>([])
   const [shipments, setShipments] = useState<ConsolidationShipment[]>([])
   const [appRest, setAppRest] = useState<Pick<
     GroupBuyAppData,
@@ -47,6 +50,17 @@ export function ConsolidationPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [draft, setDraft] = useState({ billedWeightKg: '', intlFeeTwd: '', intlTrackingNo: '', carrier: '', note: '' })
+
+  useRemoteSlice((slice) => {
+    if (isSheetEditing() || busy || draft.billedWeightKg || draft.intlFeeTwd || draft.intlTrackingNo || draft.carrier || draft.note) return
+    if (slice.groups) {
+      const incoming = slice.groups as GroupBuyGroup[]
+      setGroups((prev) => mergeGroupList(prev, incoming))
+      baseGroupsRef.current = mergeGroupList(baseGroupsRef.current, incoming)
+    }
+    if (slice.paymentReports) setAppRest((prev) => (prev ? { ...prev, paymentReports: slice.paymentReports as GroupBuyAppData['paymentReports'] } : prev))
+    if (slice.bankJournal) setAppRest((prev) => (prev ? { ...prev, bankJournal: slice.bankJournal as GroupBuyAppData['bankJournal'] } : prev))
+  })
 
   const opsGroups = useMemo(() => groups.filter(isInGroupOps), [groups])
   const available = useMemo(() => listAvailableParcels(opsGroups, shipments), [opsGroups, shipments])
@@ -78,30 +92,29 @@ export function ConsolidationPage() {
         paymentReports: data.paymentReports || [],
       }
       setGroups(rawGroups)
+      baseGroupsRef.current = rawGroups
       setShipments(nextShips)
       setAppRest(rest)
       if (nextShips !== rawShips) {
         const syncedGroups = syncGroupStatusesFromShipments(rawGroups, nextShips)
-        await api.call({
-          module: 'groupbuy',
-          action: 'saveAppData',
-          payload: {
-            groups: syncedGroups,
-            bankJournal: rest.bankJournal,
-            exchangeRate: rest.exchangeRate,
-            portalConfig: rest.portalConfig || {
-              title: '訂單自助查詢',
-              intro: '',
-              websiteUrl: '',
-              groupUrl: '',
-              extraNote: '',
-            },
-            paymentReports: rest.paymentReports,
-            consolidationShipments: nextShips,
+        const { payload, mutationMode } = buildGroupSavePayload(rawGroups, syncedGroups, {
+          bankJournal: rest.bankJournal,
+          exchangeRate: rest.exchangeRate,
+          portalConfig: rest.portalConfig || {
+            title: '訂單自助查詢',
+            intro: '',
+            websiteUrl: '',
+            groupUrl: '',
+            extraNote: '',
           },
+          paymentReports: rest.paymentReports,
+          consolidationShipments: nextShips,
         })
-        setGroups(syncedGroups)
-        for (const g of syncedGroups) syncV50GroupOrdersToDaigou(g)
+        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+        const committed = mutationMode ? applySavedRevisions(syncedGroups, saved) : syncedGroups
+        baseGroupsRef.current = committed
+        setGroups(committed)
+        for (const g of committed) syncV50GroupOrdersToDaigou(g)
       }
     } catch (e) {
       console.error(e)
@@ -130,8 +143,7 @@ export function ConsolidationPage() {
     if (!appRest) return
     const shipsSynced = syncShipmentsFromGroupStatuses(nextGroups, nextShips)
     const synced = syncGroupStatusesFromShipments(nextGroups, shipsSynced)
-    const payload: GroupBuySavePayload = {
-      groups: synced,
+    const { payload, mutationMode } = buildGroupSavePayload(baseGroupsRef.current, synced, {
       bankJournal: appRest.bankJournal,
       exchangeRate: appRest.exchangeRate,
       portalConfig: appRest.portalConfig || {
@@ -143,11 +155,13 @@ export function ConsolidationPage() {
       },
       paymentReports: appRest.paymentReports,
       consolidationShipments: shipsSynced,
-    }
-    await api.call({ module: 'groupbuy', action: 'saveAppData', payload })
-    setGroups(synced)
+    })
+    const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+    const committed = mutationMode ? applySavedRevisions(synced, saved) : synced
+    baseGroupsRef.current = committed
+    setGroups(committed)
     setShipments(shipsSynced)
-    for (const g of synced) syncV50GroupOrdersToDaigou(g)
+    for (const g of committed) syncV50GroupOrdersToDaigou(g)
   }
 
   const allAvailableSelected = available.length > 0 && available.every((p) => selected.has(parcelKey(p)))

@@ -62,6 +62,7 @@ import { AgentDebugPanel } from './debug/AgentDebugPanel'
 import { agentLog } from './debug/agentLog'
 import { RouteFallback } from './components/app/RouteFallback'
 import { LocalPreviewBar } from './components/app/LocalPreviewBar'
+import { SheetSyncBridge } from './sync/SheetSyncBridge'
 /** 新增頂層 `<Route path>` 時請同步 `src/router/hashPathPrefixes.ts`（path→hash 深連結）。 */
 
 /** 與 GAS 部署一致：一律 Hash，避免本機用 `/#/…` 時誤判為 `/` 而進錯頁 */
@@ -94,6 +95,7 @@ export default function App() {
       <DebugRouteTrace />
       <AgentDebugPanel />
       <LocalPreviewBar />
+      <SheetSyncBridge />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           {/* 預設入口：維持原顧客前台 #/lookup 為主 */}

@@ -2,6 +2,7 @@ import type { UnifiedClient } from '../api/client'
 import type { GroupBuyAppData, UnifiedRequest } from '../api/types'
 import { attachAdminToken } from '../auth/attachAdminToken'
 import { gasWebAppUrl, hasRemoteGas } from '../config/gasEndpoint'
+import { noteAppliedRevision } from '../sync/sheetSync'
 
 export { hasRemoteGas }
 
@@ -95,6 +96,8 @@ function shouldTryJsonp(err: unknown): boolean {
 const APP_DATA_MUTATIONS = new Set([
   'saveAppData',
   'saveBankJournal',
+  'deleteBankJournalRows',
+  'restoreBankJournalRows',
   'syncPortalLookupCustomers',
   'confirmPaymentReport',
   'deletePaymentReport',
@@ -108,6 +111,7 @@ const APP_DATA_MUTATIONS = new Set([
 type AppDataCache = { revision: string; data: GroupBuyAppData }
 
 let appDataCache: AppDataCache | null = null
+let lastDataRevision: string | null = null
 let appDataFlight: Promise<GroupBuyAppData> | null = null
 let publicGroupsCache: { at: number; data: unknown } | null = null
 let mutationFlight = false
@@ -115,6 +119,41 @@ let mutationFlight = false
 function payloadRecord(payload: unknown): Record<string, unknown> | null {
   if (!payload || typeof payload !== 'object') return null
   return payload as Record<string, unknown>
+}
+
+export function mergeCachedSlice(slice: {
+  dataRevision?: string
+  groups?: Array<{ id: string; orders?: Array<{ id: string }> }>
+  paymentReports?: unknown[]
+  bankJournal?: unknown[]
+}) {
+  if (slice.dataRevision != null) {
+    lastDataRevision = String(slice.dataRevision)
+    noteAppliedRevision(lastDataRevision)
+  }
+  if (!appDataCache) return
+  const data = appDataCache.data
+  if (slice.groups) {
+    const map = new Map((data.groups || []).map((group) => [group.id, { ...group, orders: [...(group.orders || [])] }]))
+    for (const group of slice.groups as GroupBuyAppData['groups']) {
+      const current = map.get(group.id)
+      if (!current) {
+        map.set(group.id, group)
+        continue
+      }
+      const orders = [...(current.orders || [])]
+      for (const order of group.orders || []) {
+        const index = orders.findIndex((item) => item.id === order.id)
+        if (index >= 0) orders[index] = { ...orders[index], ...order }
+        else orders.push(order)
+      }
+      map.set(group.id, { ...current, ...group, orders })
+    }
+    data.groups = [...map.values()]
+  }
+  if (slice.paymentReports) data.paymentReports = slice.paymentReports as GroupBuyAppData['paymentReports']
+  if (slice.bankJournal) data.bankJournal = slice.bankJournal as GroupBuyAppData['bankJournal']
+  appDataCache = { revision: lastDataRevision || appDataCache.revision, data }
 }
 
 export function createGasHttpClient(): UnifiedClient {
@@ -137,10 +176,12 @@ export function createGasHttpClient(): UnifiedClient {
       }
 
       let bodyReq = attachAdminToken(req)
-      if (mutate && appDataCache) {
+      if (mutate) {
+        const revision = lastDataRevision || appDataCache?.revision || ''
+        if (!revision) throw new Error('缺少資料版本，請重新載入後再儲存')
         bodyReq = {
           ...bodyReq,
-          payload: { ...(payloadRecord(bodyReq.payload) || {}), dataRevision: appDataCache.revision },
+          payload: { ...(payloadRecord(bodyReq.payload) || {}), dataRevision: revision },
         }
       }
       if (mutate) mutationFlight = true
@@ -156,10 +197,37 @@ export function createGasHttpClient(): UnifiedClient {
           }
           if (readApp) {
             const packed = data as GroupBuyAppData
-            appDataCache = { revision: String(packed.dataRevision ?? '0'), data: packed }
+            const incomingRevision = String(packed.dataRevision ?? '0')
+            const knownRevision = lastDataRevision
+            const stale =
+              knownRevision != null &&
+              Number.isFinite(Number(incomingRevision)) &&
+              Number.isFinite(Number(knownRevision)) &&
+              Number(incomingRevision) < Number(knownRevision)
+            if (stale) {
+              if (appDataCache) return appDataCache.data as T
+              const retry = await postCall<T>(url, bodyReq)
+              const retryPacked = retry as GroupBuyAppData
+              const retryRevision = String(retryPacked.dataRevision ?? '0')
+              if (Number(retryRevision) < Number(knownRevision || '0')) {
+                throw new Error('伺服器回傳的資料版本較舊，請重新載入')
+              }
+              lastDataRevision = retryRevision
+              noteAppliedRevision(lastDataRevision)
+              appDataCache = { revision: lastDataRevision, data: retryPacked }
+              return retry
+            }
+            lastDataRevision = incomingRevision
+            noteAppliedRevision(lastDataRevision)
+            appDataCache = { revision: lastDataRevision, data: packed }
           }
           if (publicList) publicGroupsCache = { at: Date.now(), data }
           if (mutate) {
+            const saved = data as { dataRevision?: string }
+            if (saved && saved.dataRevision != null) {
+              lastDataRevision = String(saved.dataRevision)
+              noteAppliedRevision(lastDataRevision)
+            }
             appDataCache = null
             appDataFlight = null
             publicGroupsCache = null

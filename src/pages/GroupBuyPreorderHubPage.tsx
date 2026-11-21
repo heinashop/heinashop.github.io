@@ -19,13 +19,15 @@ import {
 import { PageHeader, Btn, Modal } from '../components/ui'
 import { PageLayout } from '../components/app/PageLayout'
 import { useApi } from '../context/useApi'
+import { isSheetEditing, mergeGroupList } from '../sync/sheetSync'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
+import { applySavedRevisions, buildGroupSavePayload, type SaveResult } from '../sync/groupSave'
 import { summarizePendingBalance } from '../daigou/commercialDashboard'
 import { useDaigouStore } from '../daigou/store'
 import type {
   GroupBuyAppData,
   GroupBuyGroup,
   GroupBuyOrder,
-  GroupBuySavePayload,
 } from '../api/types'
 import { V50GroupExcelModal } from '../modules/groupbuy/V50GroupExcelModal'
 import { syncV50GroupOrdersToDaigou, syncV50OrderToDaigou, reconcileShippingQueueFromDaigou } from '../modules/groupbuy/v50DaigouSync'
@@ -84,6 +86,17 @@ export function GroupBuyPreorderHubPage() {
   const api = useApi()
   const [loading, setLoading] = useState(true)
   const [groups, setGroups] = useState<GroupBuyGroup[]>([])
+  const baseGroupsRef = useRef<GroupBuyGroup[]>([])
+  useRemoteSlice((slice) => {
+    if (isSheetEditing()) return
+    if (slice.groups) {
+      const incoming = slice.groups as GroupBuyGroup[]
+      setGroups((prev) => mergeGroupList(prev, incoming))
+      baseGroupsRef.current = mergeGroupList(baseGroupsRef.current, incoming)
+    }
+    if (slice.bankJournal) setBankJournal(slice.bankJournal as GroupBuyAppData['bankJournal'])
+    if (slice.paymentReports) setPaymentReports(slice.paymentReports as GroupBuyAppData['paymentReports'])
+  })
   const [bankJournal, setBankJournal] = useState<GroupBuyAppData['bankJournal']>([])
   const [paymentReports, setPaymentReports] = useState<GroupBuyAppData['paymentReports']>([])
   const [portalConfig, setPortalConfig] = useState<GroupBuyAppData['portalConfig'] | null>(null)
@@ -146,6 +159,7 @@ export function GroupBuyPreorderHubPage() {
     try {
       const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
       setGroups(data.groups || [])
+      baseGroupsRef.current = data.groups || []
       for (const g of data.groups || []) syncV50GroupOrdersToDaigou(g)
       reconcileShippingQueueFromDaigou()
       setBankJournal(data.bankJournal || [])
@@ -179,8 +193,7 @@ export function GroupBuyPreorderHubPage() {
     ) => {
       setStatusMsg('儲存中…')
       try {
-        const payload: GroupBuySavePayload = {
-          groups: nextGroups,
+        const extra = {
           bankJournal: nextJournal,
           exchangeRate,
           portalConfig: portalConfig || {
@@ -192,14 +205,17 @@ export function GroupBuyPreorderHubPage() {
           },
           paymentReports: nextPaymentReports,
         }
-        await api.call({ module: 'groupbuy', action: 'saveAppData', payload })
-        setGroups(nextGroups)
+        const { payload, mutationMode } = buildGroupSavePayload(baseGroupsRef.current, nextGroups, extra)
+        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+        const committed = mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups
+        baseGroupsRef.current = committed
+        setGroups(committed)
         setBankJournal(nextJournal)
         setPaymentReports(nextPaymentReports)
-        setStatusMsg('已儲存')
+        setStatusMsg(mutationMode ? '已儲存（只寫入本次改動）' : '已儲存')
       } catch (e) {
         console.error(e)
-        setStatusMsg('儲存失敗')
+        setStatusMsg(e instanceof Error ? e.message : '儲存失敗')
       }
       setTimeout(() => setStatusMsg(''), 2200)
     },

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { Btn, Card, PageHeader } from '../components/ui'
 import { useApi } from '../context/useApi'
+import { isSheetEditing, mergeGroupList } from '../sync/sheetSync'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
 import type {
   ConfirmPaymentReportPayload,
   CustomerPaymentReport,
@@ -105,6 +107,16 @@ function syncReportOrders(report: CustomerPaymentReport, groups: GroupBuyAppData
 
 export function PaymentReportPage() {
   const api = useApi()
+  const operationIds = useRef<Record<string, string>>({})
+  function operationIdFor(key: string) {
+    if (!operationIds.current[key]) {
+      operationIds.current[key] = `op_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
+    }
+    return operationIds.current[key]
+  }
+  function clearOperation(key: string) {
+    delete operationIds.current[key]
+  }
   const [loading, setLoading] = useState(true)
   const [paymentReports, setPaymentReports] = useState<GroupBuyAppData['paymentReports']>([])
   const [groups, setGroups] = useState<GroupBuyAppData['groups']>([])
@@ -113,6 +125,11 @@ export function PaymentReportPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [revertingId, setRevertingId] = useState<string | null>(null)
   const [supplementingId, setSupplementingId] = useState<string | null>(null)
+  useRemoteSlice((slice) => {
+    if (isSheetEditing() || confirmingId || supplementingId) return
+    if (slice.groups) setGroups((prev) => mergeGroupList(prev || [], slice.groups as GroupBuyAppData['groups']))
+    if (slice.paymentReports) setPaymentReports(slice.paymentReports as GroupBuyAppData['paymentReports'])
+  })
   const [bankByReport, setBankByReport] = useState<Record<string, string>>({})
   const [depositByReport, setDepositByReport] = useState<Record<string, Record<string, number>>>({})
   const [selectedByReport, setSelectedByReport] = useState<Record<string, string[]>>({})
@@ -260,7 +277,7 @@ export function PaymentReportPage() {
   async function deleteReport(report: CustomerPaymentReport) {
     const isConfirmed = report.status === 'confirmed'
     const msg = isConfirmed
-      ? '確定刪除此筆已確認的回報？將回復訂單為未付款並移除日記帳。'
+      ? '確定刪除此筆已確認的回報？訂單會回到未付款，訂金回到審核前記錄的應付金額，付款備註會清空。銀行日記帳的收入會保留，不會自動刪除，也不會自動新增負數沖銷。'
       : '確定刪除此筆付款回報？刪除後客人可重新送出。'
     if (!window.confirm(msg)) return
 
@@ -294,7 +311,7 @@ export function PaymentReportPage() {
   async function revertReport(report: CustomerPaymentReport) {
     if (
       !window.confirm(
-        '確定將此筆回報返回待確認？將回復訂單為未付款並移除對應日記帳，可重新核對後再確認。',
+        '確定將此筆回報返回待確認？訂單會回到未付款，訂金回到審核前記錄的應付金額，付款備註會清空，付款回報回到待確認。銀行日記帳的收入會保留，不會自動刪除，也不會自動新增負數沖銷，請另行人工核對。',
       )
     ) {
       return
@@ -306,7 +323,7 @@ export function PaymentReportPage() {
       const res = await api.call<ActionResult>({
         module: 'groupbuy',
         action: 'revertPaymentReport',
-        payload: { reportId: report.id } satisfies RevertPaymentReportPayload,
+        payload: { reportId: report.id, operationId: operationIdFor(`revert:${report.id}`) } satisfies RevertPaymentReportPayload,
       })
       if (!res.ok) {
         flashStatus(res.message || '返回失敗')
@@ -316,6 +333,7 @@ export function PaymentReportPage() {
       await refreshAfterMutation(data)
       syncReportOrders(report, data.groups)
       reopenReportBalanceMemos(report)
+      clearOperation(`revert:${report.id}`)
       setActiveTab('pending')
       flashStatus(res.message || '已返回待確認')
     } catch (e) {
@@ -392,6 +410,7 @@ export function PaymentReportPage() {
           remittanceDate: supplementDate,
           remittanceBank: supplementBank,
           note: supplementNote.trim() || undefined,
+          operationId: operationIdFor(`supplement:${supplementTarget.reportId}:${supplementTarget.orderId}:${amount}`),
         } satisfies SupplementPaymentReportPayload,
       })
       if (!res.ok) {
@@ -405,6 +424,7 @@ export function PaymentReportPage() {
         data.groups,
         [supplementTarget.orderId],
       )
+      clearOperation(`supplement:${supplementTarget.reportId}:${supplementTarget.orderId}:${amount}`)
       setSupplementTarget(null)
       flashStatus(res.message || '補款已入帳')
     } catch (e) {
@@ -442,6 +462,7 @@ export function PaymentReportPage() {
           remittanceBank: bank,
           lineDeposits,
           selectedOrderIds: selectedIds,
+          operationId: operationIdFor(`confirm:${reportId}`),
         } satisfies ConfirmPaymentReportPayload,
       })
       if (!res.ok) {
@@ -453,6 +474,7 @@ export function PaymentReportPage() {
       setActiveTab('confirmed')
       syncReportOrders(pending, data.groups, selectedIds)
       settleReportBalanceMemos(pending)
+      clearOperation(`confirm:${reportId}`)
       flashStatus(res.message || '已確認付款')
     } catch (e) {
       console.error(e)

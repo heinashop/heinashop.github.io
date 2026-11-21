@@ -3,6 +3,8 @@ import { FileDown, FileUp, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react'
 import { Btn, Empty, PageHeader } from '../components/ui'
 import { PageLayout } from '../components/app/PageLayout'
 import { useApi } from '../context/useApi'
+import { isSheetEditing } from '../sync/sheetSync'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
 import type { BankJournalRow } from '../api/types'
 import { localTodayIso } from '../modules/groupbuy/v50Utils'
 import {
@@ -30,6 +32,7 @@ export function JournalPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<BankJournalRow[]>([])
+  const [orderPaid, setOrderPaid] = useState(0)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [canUndo, setCanUndo] = useState(false)
@@ -47,11 +50,16 @@ export function JournalPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.call<{ bankJournal?: BankJournalRow[] }>({
+      const data = await api.call<{ bankJournal?: BankJournalRow[]; groups?: Array<{ orders?: Array<{ deposit?: number }> }> }>({
         module: 'groupbuy',
         action: 'getAppData',
       })
       setRows(sortJournalNewest(data.bankJournal || []))
+      const paid = (data.groups || []).reduce(
+        (sum, group) => sum + (group.orders || []).reduce((inner, order) => inner + (Number(order.deposit) || 0), 0),
+        0,
+      )
+      setOrderPaid(paid)
       refreshUndo()
     } catch (e) {
       console.error(e)
@@ -65,18 +73,23 @@ export function JournalPage() {
     void load()
   }, [load])
 
+  useRemoteSlice((slice) => {
+    if (isSheetEditing()) return
+    if (slice.bankJournal || slice.groups) void load()
+  })
+
   function flash(msg: string) {
     setStatus(msg)
     window.setTimeout(() => setStatus(''), 2800)
   }
 
   const persist = useCallback(
-    async (next: BankJournalRow[], recordUndo = true) => {
+    async (next: BankJournalRow[], recordUndo = true, mode: 'replace' | 'upsert' = 'replace') => {
       if (recordUndo) pushJournalUndo(rows)
       const saved = await api.call<{ bankJournal?: BankJournalRow[] }>({
         module: 'groupbuy',
         action: 'saveBankJournal',
-        payload: { bankJournal: next, mode: 'replace' },
+        payload: { bankJournal: next, mode },
       })
       setRows(sortJournalNewest(saved?.bankJournal || next))
       refreshUndo()
@@ -108,7 +121,7 @@ export function JournalPage() {
     }
     setBusy(true)
     try {
-      await persist([row, ...rows])
+      await persist([row, ...rows], true, 'upsert')
       setDraft({ date: localTodayIso(), amount: '', note: '', lastFive: '' })
       flash('已新增日記帳（不影響團務明細）')
     } catch (e) {
@@ -122,12 +135,21 @@ export function JournalPage() {
   async function removeRow(id: string) {
     if (!window.confirm('確定刪除此筆日記帳？團務明細與付款狀態不會被改動。')) return
     setBusy(true)
+    pushJournalUndo(rows)
     try {
-      await persist(rows.filter((r) => r.id !== id))
+      const saved = await api.call<{ bankJournal?: BankJournalRow[] }>({
+        module: 'groupbuy',
+        action: 'deleteBankJournalRows',
+        payload: { ids: [id], operationId: `journal_del_${Date.now()}_${Math.random().toString(16).slice(2, 6)}` },
+      })
+      setRows(sortJournalNewest(saved?.bankJournal || rows.filter((r) => r.id !== id)))
+      refreshUndo()
       flash('已刪除日記帳（團務明細未改）')
     } catch (e) {
       console.error(e)
-      flash('刪除失敗')
+      popJournalUndo()
+      refreshUndo()
+      flash(e instanceof Error ? e.message : '刪除失敗')
     } finally {
       setBusy(false)
     }
@@ -142,12 +164,25 @@ export function JournalPage() {
     }
     setBusy(true)
     try {
-      await persist(prev, false)
-      flash('已還原上一版日記帳')
+      const currentIds = new Set(rows.map((r) => r.id))
+      const prevIds = new Set(prev.map((r) => r.id))
+      const toRestore = prev.filter((r) => !currentIds.has(r.id))
+      const deleteIds = rows.filter((r) => !prevIds.has(r.id)).map((r) => r.id)
+      const saved = await api.call<{ bankJournal?: BankJournalRow[] }>({
+        module: 'groupbuy',
+        action: 'restoreBankJournalRows',
+        payload: {
+          rows: toRestore,
+          deleteIds,
+          operationId: `journal_restore_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+        },
+      })
+      setRows(sortJournalNewest(saved?.bankJournal || prev))
+      flash('已還原上一版日記帳（只處理差異紀錄）')
     } catch (e) {
       console.error(e)
       pushJournalUndo(prev)
-      flash('還原失敗')
+      flash(e instanceof Error ? e.message : '還原失敗')
     } finally {
       setBusy(false)
       refreshUndo()
@@ -179,7 +214,11 @@ export function JournalPage() {
       const replace = window.confirm(
         `匯入 ${incoming.length} 筆。\n\n確定：整份覆蓋目前日記帳（用備份檔還原時選這個）\n取消：依 ID 合併，不刪現有列`,
       )
-      await persist(replace ? sortJournalNewest(incoming) : mergeJournalById(rows, incoming))
+      await persist(
+        replace ? sortJournalNewest(incoming) : mergeJournalById(rows, incoming),
+        true,
+        replace ? 'replace' : 'upsert',
+      )
       flash(replace ? `已覆蓋為 ${incoming.length} 筆` : `已合併 ${incoming.length} 筆`)
     } catch (e) {
       console.error(e)
@@ -279,8 +318,9 @@ export function JournalPage() {
         </section>
 
         <p className="journal-sum">
-          共 {rows.length} 筆 · 合計 {money(total)}
+          原始收入合計 {money(total)}。這是全部日記帳收入相加，包含已撤銷審核但仍保留的收入，不是退款後的淨額。
         </p>
+        <p className="journal-sum">目前訂單已付金額 {money(orderPaid)}。這是訂單上的訂金，與原始收入合計分開計算。</p>
 
         {loading ? <p className="journal-loading">載入中…</p> : null}
 
@@ -299,7 +339,11 @@ export function JournalPage() {
               <div key={row.id} className="journal-table-row" role="row">
                 <span role="cell">{row.date || '—'}</span>
                 <strong role="cell">{money(row.amount)}</strong>
-                <span role="cell">{displayJournalNote(row) || '—'}</span>
+                <span role="cell">
+                  {displayJournalNote(row) || '—'}
+                  {row.operationId ? ` · 操作 ${row.operationId}` : ''}
+                  {row.reviewState ? ` · ${row.reviewState}` : ''}
+                </span>
                 <span className="journal-five" role="cell">
                   {formatLastFiveDisplay(displayJournalLastFive(row))}
                 </span>

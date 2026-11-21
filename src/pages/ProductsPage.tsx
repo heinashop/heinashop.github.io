@@ -167,7 +167,7 @@ export function ProductsPage() {
           {filtered.map((p) => (
             <Card key={p.id} className="flex flex-col gap-2">
               <div className="flex gap-3">
-                <img src={p.imageUrl} alt="" className="h-20 w-20 rounded-xl object-cover" />
+                <img loading="lazy" decoding="async" src={p.imageUrl} alt="" className="h-20 w-20 rounded-xl object-cover" />
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 font-semibold text-zinc-900">{p.name}</p>
                   <p className="text-xs text-zinc-500">

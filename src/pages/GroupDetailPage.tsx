@@ -192,7 +192,7 @@ export function GroupDetailPage() {
             gProducts.map((p) => (
               <DataRowCard key={p.id} clickable={false}>
                 <div className="flex gap-4">
-                  <img src={p.imageUrl} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover ring-1 ring-white/[0.08]" />
+                  <img loading="lazy" decoding="async" src={p.imageUrl} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover ring-1 ring-white/[0.08]" />
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-ds-text">{p.name}</p>
                     <p className="text-meta text-ds-text-muted">

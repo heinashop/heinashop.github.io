@@ -36,6 +36,7 @@ export type CustomerLookupExperienceProps = {
   extraNote?: string
   /** 查詢訂單標題下方說明（後台可編） */
   lookupDesc?: string
+  autoSync?: 'idle' | 'checking' | 'updated' | 'error'
 }
 
 export function CustomerLookupExperience({
@@ -55,6 +56,7 @@ export function CustomerLookupExperience({
   membership = null,
   extraNote = '',
   lookupDesc = '',
+  autoSync = 'idle',
 }: CustomerLookupExperienceProps) {
   const api = useApi()
   const [orderBucketTab, setOrderBucketTab] = useState<DaigouOrderBucket>('pending')
@@ -286,6 +288,11 @@ export function CustomerLookupExperience({
 
       {hasResults ? (
         <section className="lk-results lk-results--preview" aria-label="查詢結果">
+          {autoSync !== 'idle' ? (
+            <p className="lk-auto-sync" role="status">
+              {autoSync === 'checking' ? '資料更新中…' : autoSync === 'updated' ? '已自動更新為最新資料' : '暫時無法確認最新版本'}
+            </p>
+          ) : null}
           <div className="lk-results-toolbar">
             {onBackHome ? (
               <button type="button" className="lk-back-home-btn lk-back-home-btn--inline" onClick={onBackHome}>

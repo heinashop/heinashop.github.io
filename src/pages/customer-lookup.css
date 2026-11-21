@@ -2442,6 +2442,12 @@
   font-size: 0.82rem;
 }
 
+.lk-auto-sync {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: #4f46e5;
+}
+
 .lk-results-toolbar {
   display: flex;
   flex-wrap: wrap;

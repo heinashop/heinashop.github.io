@@ -1,34 +1,18 @@
 Heina Suite — GitHub Pages 前端 + Apps Script API
 ==================================================
+建置時間：2026-11-21T19:10:47.466Z
 
-【前端】GitHub Pages
---------------------------------------
-倉庫預設分支推上後，GitHub Actions（.github/workflows/pages.yml）會建置並部署。
-預期網址：https://amherstwu.github.io/heina-suite/
-Pages 來源請選 GitHub Actions。私人倉庫的 Pages 需要付費方案，否則請將倉庫設為公開。
+顧客網站：https://heinashop.github.io/
+（GitHub Pages，來源選 GitHub Actions。私人倉庫需要付費方案。）
 
-建置時設定：
-  VITE_BASE=/heina-suite/
-  VITE_GAS_URL=https://script.google.com/macros/s/XXXX/exec
-GitHub → Settings → Secrets and variables → Actions → Variables → VITE_GAS_URL
-改網址後要重新跑 workflow，網址會進到公開的 JS（這是 Web App 網址，不是密碼）。
+Apps Script Web App（結尾 /exec）是資料 API，不是網站本體。
+部署：執行身分「我」、存取權「任何人」。把 /exec 網址設成 GitHub Actions 變數 VITE_GAS_URL 後重新跑 workflow。
 
-【後端】Apps Script
---------------------------------------
-1. 試算表 → 擴充功能 → Apps Script（綁定這本試算表）
-2. 將本目錄 Code.gs 貼成一支指令碼（或 clasp push gas/）
-3. 部署 → 新增部署 → 類型「網頁應用程式」
-   執行身分：我
-   誰可以存取：任何人
-4. 複製結尾為 /exec 的網址，填進 VITE_GAS_URL，重新部署 Pages
-5. 專案設定 → 指令碼屬性（不要提交到 Git）：
-   HEINA_ADMIN_PASSWORD   後台登入密碼
-   HEINA_LOOKUP_PIN       4 位數查單預設密碼（客人沒有個別密碼時使用）
-   HEINA_BANK_PASSWORD    匯款帳號查詢密碼
-   HEINA_PAGES_URL        選用，預設為 GitHub Pages 網址
+指令碼屬性（不要提交到 Git）：
+  HEINA_ADMIN_PASSWORD
+  HEINA_LOOKUP_PIN
+  HEINA_BANK_PASSWORD
+  HEINA_PAGES_URL（選用）
 
-index.html 是給舊版「用 Apps Script 開網站」的說明頁，不是 20MB 的前端。
-顧客請開 GitHub Pages。/exec 沒有 query 時，若專案裡仍有名為 index 的 HTML，會顯示該檔；否則顯示說明頁。
-
-路由是 hash（例如 #/lookup、#/shop、#/login），深連結不依賴伺服器重寫。
-另有 public/404.html，把沒有 hash 的路徑轉回 hash 路由。
+Code.gs 由 gas/*.gs 合併而來。index.html 只是說明頁，請顧客開 GitHub Pages。
+Hash 路由：#/lookup、#/shop、#/login、#/dashboard、#/procurement、#/integrations。

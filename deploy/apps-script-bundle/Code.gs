@@ -240,17 +240,35 @@ function gb_ensureOrderHeader_(sheet) {
   }
 }
 
+/** 同一次執行只讀一次設定表。圖片存在格子裡時，反覆 getValues 是開啟變慢的主因。 */
+var GB_SETTINGS_CACHE_ = null;
+
+function gb_loadSettingsMap_(sheet) {
+  if (GB_SETTINGS_CACHE_) {
+    if (sheet && !GB_SETTINGS_CACHE_.sheet) GB_SETTINGS_CACHE_.sheet = sheet;
+    return GB_SETTINGS_CACHE_;
+  }
+  var sh = sheet || SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var map = {};
+  var rowOf = {};
+  if (sh && sh.getLastRow() >= 2) {
+    var numRows = sh.getLastRow() - 1;
+    var rows = sh.getRange(2, 1, numRows, 2).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (!rows[i][0]) continue;
+      var key = String(rows[i][0]);
+      map[key] = rows[i][1];
+      rowOf[key] = i + 2;
+    }
+  }
+  GB_SETTINGS_CACHE_ = { sheet: sh, map: map, rowOf: rowOf };
+  return GB_SETTINGS_CACHE_;
+}
+
 function gb_ensureDefaultSettings_() {
   var ss = SpreadsheetApp.getActive();
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
-  var lastRow = settingsSheet.getLastRow();
-  var existing = {};
-  if (lastRow >= 2) {
-    var rows = settingsSheet.getRange(2, 1, lastRow, 2).getValues();
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i][0]) existing[String(rows[i][0])] = rows[i][1];
-    }
-  }
+  var existing = gb_loadSettingsMap_(settingsSheet).map;
   var defaults = [
     ['exchangeRate', existing.exchangeRate != null ? existing.exchangeRate : '0.22'],
     ['portalTitle', existing.portalTitle != null ? existing.portalTitle : 'Heina訂單自助查詢'],
@@ -260,39 +278,21 @@ function gb_ensureDefaultSettings_() {
     ['portalExtraNote', existing.portalExtraNote != null ? existing.portalExtraNote : '付款後請填寫：付款日期、後五碼，等待對帳完成後即可在此查看狀態。'],
     ['portalLookupDesc', existing.portalLookupDesc != null ? existing.portalLookupDesc : '請輸入在社群裡的名字。若有改名或無法查詢請私訊官方 LINE。查單密碼為 4 位數字，可自行修改。']
   ];
-  var appendRows = [];
   for (var d = 0; d < defaults.length; d++) {
     var k = defaults[d][0];
-    if (existing[k] === undefined) appendRows.push(defaults[d]);
-  }
-  if (appendRows.length) {
-    var start = settingsSheet.getLastRow() + 1;
-    settingsSheet.getRange(start, 1, start + appendRows.length - 1, 2).setValues(appendRows);
+    if (existing[k] === undefined) gb_upsertSetting_(settingsSheet, k, defaults[d][1]);
   }
 }
 
 function gb_getGroupCreditCard_(groupId) {
-  var key = 'gb_card_' + String(groupId || '');
-  var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(GB_SHEET_SETTINGS);
-  if (!sh || sh.getLastRow() < 2) return '';
-  var rows = sh.getRange(2, 1, sh.getLastRow(), 2).getValues();
-  for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === key) return String(rows[i][1] || '');
-  }
-  return '';
+  return gb_getGroupSetting_(groupId, 'card');
 }
 
 function gb_getGroupSetting_(groupId, suffix) {
   var key = 'gb_' + suffix + '_' + String(groupId || '');
-  var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(GB_SHEET_SETTINGS);
-  if (!sh || sh.getLastRow() < 2) return '';
-  var rows = sh.getRange(2, 1, sh.getLastRow(), 2).getValues();
-  for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === key) return String(rows[i][1] || '');
-  }
-  return '';
+  var cache = gb_loadSettingsMap_();
+  if (!Object.prototype.hasOwnProperty.call(cache.map, key)) return '';
+  return String(cache.map[key] || '');
 }
 
 function gb_setGroupCreditCard_(groupId, card) {
@@ -304,7 +304,8 @@ function gb_getGroupPortalField_(groupId, field) {
   return gb_getGroupSetting_(groupId, field);
 }
 
-function gb_setGroupPortalFields_(group) {
+function gb_setGroupPortalFields_(group, options) {
+  options = options || {};
   var sh = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
   var id = String(group.id || '');
   var imageUrls = group.imageUrls || [];
@@ -313,14 +314,18 @@ function gb_setGroupPortalFields_(group) {
   }
   var cover = String(group.coverImageUrl || (imageUrls.length ? imageUrls[0] : '') || '');
   gb_upsertSetting_(sh, 'gb_description_' + id, String(group.description || ''));
-  gb_upsertSetting_(sh, 'gb_coverImage_' + id, cover.length > 49000 ? '' : cover);
+  if (!options.skipImages) {
+    gb_upsertSetting_(sh, 'gb_coverImage_' + id, cover.length > 49000 ? '' : cover);
+  }
   gb_upsertSetting_(sh, 'gb_remarks_' + id, String(group.remarks || ''));
   gb_upsertSetting_(sh, 'gb_channel_' + id, String(group.channel || ''));
   if (group.opsActive === false) gb_upsertSetting_(sh, 'gb_opsActive_' + id, '0');
   else gb_upsertSetting_(sh, 'gb_opsActive_' + id, '1');
   if (group.portalListed === false) gb_upsertSetting_(sh, 'gb_portalListed_' + id, '0');
   else gb_upsertSetting_(sh, 'gb_portalListed_' + id, '1');
-  gb_writeGroupImages_(sh, id, imageUrls);
+  gb_upsertSetting_(sh, 'gb_stockAlert_' + id, group.stockAlert ? '1' : '0');
+  gb_upsertSetting_(sh, 'gb_stockAlertNote_' + id, String(group.stockAlertNote || ''));
+  if (!options.skipImages) gb_writeGroupImages_(sh, id, imageUrls);
 }
 
 /** 每張圖單獨一格，避免 JSON 陣列超過試算表 5 萬字元上限 */
@@ -389,6 +394,8 @@ function gb_attachGroupPortalFields_(group) {
   group.opsActive = opsRaw === '0' ? false : true;
   var listedRaw = String(gb_getGroupPortalField_(id, 'portalListed') || '').trim();
   group.portalListed = listedRaw === '0' ? false : true;
+  group.stockAlert = String(gb_getGroupPortalField_(id, 'stockAlert') || '').trim() === '1';
+  group.stockAlertNote = String(gb_getGroupPortalField_(id, 'stockAlertNote') || '');
   return group;
 }
 
@@ -538,7 +545,8 @@ function gb_buildPortalConfigFromSettings_(settings) {
     threadsUrl: String(settings.portalThreadsUrl || ''),
     preorderShopUrl: String(settings.portalPreorderShopUrl || ''),
     spotShopUrl: String(settings.portalSpotShopUrl || ''),
-    footer: String(settings.portalFooter || '')
+    footer: String(settings.portalFooter || ''),
+    avatarUrl: String(settings.portalAvatarUrl || '')
   };
   if (announcements) pc.announcements = announcements;
   if (faqItems) pc.faqItems = faqItems;
@@ -550,6 +558,14 @@ function gb_buildPortalConfigFromSettings_(settings) {
   var guideInfographics = gb_parseJsonArray_(settings.portalGuideInfographicsJson);
   if (guideInfographics && guideInfographics.length) {
     pc.guideInfographics = guideInfographics;
+  }
+  var socialIconSlots = gb_parseJsonArray_(settings.portalSocialIconSlotsJson);
+  if (socialIconSlots && socialIconSlots.length) {
+    pc.socialIconSlots = socialIconSlots;
+  }
+  var teachCards = gb_parseJsonArray_(settings.portalTeachCardsJson);
+  if (teachCards && teachCards.length) {
+    pc.teachCards = teachCards;
   }
   return pc;
 }
@@ -573,16 +589,47 @@ function gb_fetchAllData_() {
   var journalRows = journalSheet.getLastRow() > 1
     ? journalSheet.getRange(2, 1, journalSheet.getLastRow(), 7).getValues()
     : [];
-  var bankJournal = journalRows.map(function (r) {
-    return { id: r[0], date: r[1], bank: r[2], type: r[3], amount: r[4], category: r[5], note: r[6] };
+  var bankJournal = journalRows.filter(function (r) { return String(r[0] || '').trim() !== ''; }).map(function (r) {
+    var note = String(r[6] || '');
+    var m = note.match(/#(\d{5})/) || note.match(/後五碼\s*(\d{5})/);
+    return { id: r[0], date: r[1], bank: r[2], type: r[3], amount: r[4], category: r[5], note: note, lastFive: m ? m[1] : '' };
   });
 
-  var settings = {};
-  var sLast = settingsSheet.getLastRow();
-  if (sLast >= 2) {
-    var sRows = settingsSheet.getRange(2, 1, sLast, 2).getValues();
-    for (var si = 0; si < sRows.length; si++) {
-      if (sRows[si][0]) settings[String(sRows[si][0])] = sRows[si][1];
+  var settings = gb_loadSettingsMap_(settingsSheet).map;
+  var orderRevMap = gb_parseRevMap_(settings.gb_orderRevMap);
+  var groupRevMap = gb_parseRevMap_(settings.gb_groupRevMap);
+  var revertedJournals = {};
+  var opRecords = {};
+  var settingKey;
+  for (settingKey in settings) {
+    if (String(settingKey).indexOf('gb_op_') !== 0) continue;
+    try {
+      var opIdKey = String(settingKey).substring(6);
+      var opRecord = JSON.parse(String(settings[settingKey]));
+      if (!opRecord) continue;
+      opRecords[opIdKey] = opRecord;
+      if (opRecord.journalKept && opRecord.journalEntryId) revertedJournals[String(opRecord.journalEntryId)] = true;
+    } catch (ignoreOp) {}
+  }
+  for (var ji = 0; ji < bankJournal.length; ji++) {
+    var jid = String(bankJournal[ji].id || '');
+    var operationId = '';
+    if (jid.indexOf('j_pr_') === 0) operationId = jid.substring(5);
+    else if (jid.indexOf('j_sup_') === 0) operationId = jid.substring(6);
+    if (operationId && !opRecords[operationId]) operationId = '';
+    bankJournal[ji].operationId = operationId;
+    if (revertedJournals[jid]) bankJournal[ji].reviewState = '已撤銷審核，原始收入保留，不是退款';
+    else if (operationId && opRecords[operationId].status === 'done') bankJournal[ji].reviewState = '對應付款操作，收入仍保留';
+    else if (operationId) bankJournal[ji].reviewState = '對應付款操作處理中，收入仍保留';
+    else bankJournal[ji].reviewState = '';
+  }
+  var groupsOut = Object.keys(groupsMap).map(function (k) { return groupsMap[k]; });
+  var giOut, oiOut;
+  for (giOut = 0; giOut < groupsOut.length; giOut++) {
+    groupsOut[giOut].groupRevision = String(groupRevMap[groupsOut[giOut].id] || '0');
+    var groupOrders = groupsOut[giOut].orders || [];
+    for (oiOut = 0; oiOut < groupOrders.length; oiOut++) {
+      groupOrders[oiOut].orderRevision = String(orderRevMap[groupOrders[oiOut].id] || '0');
     }
   }
   var exchangeRate = settings.exchangeRate ? Number(settings.exchangeRate) : 0.22;
@@ -590,14 +637,16 @@ function gb_fetchAllData_() {
 
   var bankViewerCfg = gb_migrateBankPassword_(settingsSheet, settings, gb_readBankViewerConfig_(settings));
   return {
-    groups: Object.keys(groupsMap).map(function (k) { return groupsMap[k]; }),
+    groups: groupsOut,
     bankJournal: bankJournal,
     exchangeRate: exchangeRate,
     portalConfig: portalConfig,
     paymentReports: gb_readPaymentReports_(settings),
     portalLookupCustomers: gb_readPortalLookupCustomers_(settings),
     customerBalanceMemos: gb_readCustomerBalanceMemos_(settings),
-    bankViewer: gb_bankViewerPublicMeta_(bankViewerCfg)
+    consolidationShipments: gb_readConsolidationShipments_(settings),
+    bankViewer: gb_bankViewerPublicMeta_(bankViewerCfg),
+    dataRevision: String(settings.gb_dataRevision || '0')
   };
 }
 
@@ -646,7 +695,7 @@ function gb_customerLookup_(pl) {
   var all = gb_fetchAllData_();
   var portalConfig = all.portalConfig;
   var matches = [];
-  if (!rawQ) return { portalConfig: portalConfig, matches: matches };
+  if (!rawQ) return { portalConfig: portalConfig, matches: matches, dataRevision: all.dataRevision };
 
   var groups = all.groups || [];
   var portalCustomers = all.portalLookupCustomers || [];
@@ -700,7 +749,7 @@ function gb_customerLookup_(pl) {
       lastAuthMsg = auth.message;
     }
   }
-  if (!authOkAny) return { portalConfig: portalConfig, matches: matches, lookupError: lastAuthMsg };
+  if (!authOkAny) return { portalConfig: portalConfig, matches: matches, lookupError: lastAuthMsg, dataRevision: all.dataRevision };
 
   for (gi = 0; gi < groups.length; gi++) {
     g = groups[gi];
@@ -728,7 +777,13 @@ function gb_customerLookup_(pl) {
       });
     }
   }
-  return { portalConfig: portalConfig, matches: matches };
+  return { portalConfig: portalConfig, matches: matches, dataRevision: all.dataRevision };
+}
+
+function gb_publicRevision_() {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var cache = gb_loadSettingsMap_(sheet);
+  return { dataRevision: String(cache.map.gb_dataRevision || '0') };
 }
 
 function gb_emptyGroupRow_(g, exportDate) {
@@ -749,14 +804,17 @@ function gb_orderStubRow_(g, o, exportDate) {
   ];
 }
 
-function gb_buildFlatRows_(groups) {
+function gb_buildFlatRows_(groups, options) {
+  options = options || {};
   var rows = [];
   var exportDate = new Date().toISOString().slice(0, 10);
   for (var gi = 0; gi < groups.length; gi++) {
     var g = groups[gi];
-    gb_setGroupCreditCard_(g.id, g.creditCard || '');
-    gb_setGroupPortalFields_(g);
-    gb_setGroupCostFields_(g);
+    if (!options.skipSettings) {
+      gb_setGroupCreditCard_(g.id, g.creditCard || '');
+      gb_setGroupPortalFields_(g, options);
+      gb_setGroupCostFields_(g);
+    }
     var orders = g.orders || [];
     if (!orders.length) {
       rows.push(gb_emptyGroupRow_(g, exportDate));
@@ -786,30 +844,239 @@ function gb_buildFlatRows_(groups) {
   return rows;
 }
 
-function gb_performSave_(payload) {
+function gb_journalNoteWithFive_(j) {
+  var five = String(j.lastFive || '').replace(/\D/g, '');
+  if (five.length >= 5) five = five.slice(-5);
+  var note = String(j.note || '').trim();
+  if (five && note.indexOf('#' + five) < 0 && note.indexOf('後五碼 ' + five) < 0) {
+    note = note ? (note + ' #' + five) : ('#' + five);
+  }
+  return note;
+}
+
+function gb_writeJournalSheet_(bankJournal) {
   gb_initSheets_();
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_JOURNAL);
+  var last = sheet.getLastRow();
+  var oldCount = Math.max(0, last - 1);
+  var list = bankJournal || [];
+  var jRows = [];
+  for (var i = 0; i < list.length; i++) {
+    var j = list[i];
+    jRows.push([j.id, j.date, j.bank, j.type, j.amount, j.category, gb_journalNoteWithFive_(j)]);
+  }
+  if (jRows.length > 0) sheet.getRange(2, 1, jRows.length, 7).setValues(jRows);
+  if (oldCount > jRows.length) sheet.getRange(2 + jRows.length, 1, oldCount - jRows.length, 7).clearContent();
+}
+
+function gb_upsertJournalRows_(existing, incoming) {
+  var byId = {};
+  var i;
+  var row;
+  var id;
+  for (i = 0; i < (existing || []).length; i++) {
+    id = String(existing[i].id || '');
+    if (id) byId[id] = existing[i];
+  }
+  var fresh = [];
+  for (i = 0; i < (incoming || []).length; i++) {
+    row = incoming[i];
+    id = String(row.id || '');
+    if (!id) continue;
+    if (byId[id]) byId[id] = row;
+    else fresh.push(row);
+  }
+  var out = fresh.slice();
+  for (i = 0; i < (existing || []).length; i++) {
+    id = String(existing[i].id || '');
+    out.push(id && byId[id] ? byId[id] : existing[i]);
+  }
+  return out;
+}
+
+function gb_peekRevision_() {
+  GB_SETTINGS_CACHE_ = null;
+  var cache = gb_loadSettingsMap_();
+  var changes = [];
+  try { changes = JSON.parse(String(cache.map.gb_changeLog || '[]')); } catch (e1) { changes = []; }
+  if (!Array.isArray(changes)) changes = [];
+  return { dataRevision: String(cache.map.gb_dataRevision || '0'), changes: changes };
+}
+
+function gb_fetchSlice_(pl) {
+  var all = gb_fetchAllData_();
+  var wantG = {};
+  var wantO = {};
+  var i;
+  var gids = (pl && pl.groupIds) || [];
+  var oids = (pl && pl.orderIds) || [];
+  for (i = 0; i < gids.length; i++) wantG[String(gids[i])] = true;
+  for (i = 0; i < oids.length; i++) wantO[String(oids[i])] = true;
+  var groups = [];
+  for (i = 0; i < (all.groups || []).length; i++) {
+    var g = all.groups[i];
+    var takeGroup = !!wantG[String(g.id)];
+    var filterOrders = oids.length > 0;
+    var orders = [];
+    var oi;
+    for (oi = 0; oi < (g.orders || []).length; oi++) {
+      if ((takeGroup && !filterOrders) || wantO[String(g.orders[oi].id)]) orders.push(g.orders[oi]);
+    }
+    if (!takeGroup && !orders.length) continue;
+    var copy = {
+      id: g.id, name: g.name, status: g.status, closingDate: g.closingDate, saleEndDate: g.saleEndDate,
+      officialShipDate: g.officialShipDate, purchaseDate: g.purchaseDate, jpyAmount: g.jpyAmount,
+      orderId: g.orderId, logisticsId: g.logisticsId, purchaseLink: g.purchaseLink,
+      orders: orders
+    };
+    groups.push(copy);
+  }
+  return {
+    dataRevision: String(all.dataRevision || '0'),
+    groups: groups,
+    paymentReports: all.paymentReports || [],
+    bankJournal: all.bankJournal || []
+  };
+}
+
+function gb_saveBankJournal_(pl) {
+  return gb_withDocumentLock_(function () {
+    var all = gb_fetchAllData_();
+    gb_requireRevision_(pl, all.dataRevision);
+    var incoming = (pl && pl.bankJournal) || [];
+    var mode = pl && pl.mode ? String(pl.mode) : 'replace';
+    var next = mode === 'upsert' ? gb_upsertJournalRows_(all.bankJournal || [], incoming) : incoming;
+    gb_writeJournalSheet_(next);
+    var settingsSheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+    var nextRev = String(Number(all.dataRevision || 0) + 1);
+    gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+    gb_appendChangeLog_(nextRev, [], []);
+    return { status: 'success', bankJournal: gb_fetchAllData_().bankJournal, dataRevision: nextRev };
+  });
+}
+
+function gb_deleteBankJournalRows_(pl) {
+  return gb_withDocumentLock_(function () {
+    var all = gb_fetchAllData_();
+    gb_requireRevision_(pl, all.dataRevision);
+    var ids = (pl && pl.ids ? pl.ids : []).map(String);
+    var remove = {};
+    var i;
+    for (i = 0; i < ids.length; i++) remove[ids[i]] = true;
+    var removed = [];
+    var next = [];
+    var rows = all.bankJournal || [];
+    for (i = 0; i < rows.length; i++) {
+      if (remove[String(rows[i].id)]) removed.push(rows[i]);
+      else next.push(rows[i]);
+    }
+    gb_writeJournalSheet_(next);
+    var settingsSheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+    var nextRev = String(Number(all.dataRevision || 0) + 1);
+    gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+    gb_appendChangeLog_(nextRev, [], []);
+    var opId = pl && pl.operationId ? String(pl.operationId) : 'journal_del_' + Date.now();
+    gb_opSet_(opId, { type: 'journal_delete', ids: ids, removed: removed, at: Date.now() });
+    return { ok: true, dataRevision: nextRev, bankJournal: gb_fetchAllData_().bankJournal, deleted: removed.length, operationId: opId };
+  });
+}
+
+function gb_restoreBankJournalRows_(pl) {
+  return gb_withDocumentLock_(function () {
+    var all = gb_fetchAllData_();
+    gb_requireRevision_(pl, all.dataRevision);
+    var restore = (pl && pl.rows) || [];
+    var deleteIds = (pl && pl.deleteIds ? pl.deleteIds : []).map(String);
+    var remove = {};
+    var i;
+    for (i = 0; i < deleteIds.length; i++) remove[deleteIds[i]] = true;
+    var current = all.bankJournal || [];
+    var next = [];
+    var kept = {};
+    for (i = 0; i < current.length; i++) {
+      var id = String(current[i].id || '');
+      if (remove[id]) continue;
+      next.push(current[i]);
+      kept[id] = true;
+    }
+    var restored = 0;
+    for (i = 0; i < restore.length; i++) {
+      var row = restore[i];
+      if (!row || !row.id) continue;
+      var rid = String(row.id);
+      if (kept[rid]) continue;
+      next.push(row);
+      kept[rid] = true;
+      restored++;
+    }
+    gb_writeJournalSheet_(next);
+    var settingsSheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+    var nextRev = String(Number(all.dataRevision || 0) + 1);
+    gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+    gb_appendChangeLog_(nextRev, [], []);
+    var opId = pl && pl.operationId ? String(pl.operationId) : 'journal_restore_' + Date.now();
+    gb_opSet_(opId, { type: 'journal_restore', restored: restored, deleteIds: deleteIds, at: Date.now() });
+    return { ok: true, dataRevision: nextRev, bankJournal: gb_fetchAllData_().bankJournal, restored: restored, operationId: opId };
+  });
+}
+
+function gb_performSave_(payload) {
+  return gb_withDocumentLock_(function () {
+    return gb_performSaveLocked_(payload);
+  });
+}
+
+function gb_parseRevMap_(raw) {
+  try {
+    var parsed = JSON.parse(String(raw || '{}'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function gb_orderRev_(settings, orderId) {
+  return String(gb_parseRevMap_(settings.gb_orderRevMap)[orderId] || '0');
+}
+
+function gb_groupRev_(settings, groupId) {
+  return String(gb_parseRevMap_(settings.gb_groupRevMap)[groupId] || '0');
+}
+
+function gb_bumpRevMap_(sheet, key, id) {
+  GB_SETTINGS_CACHE_ = null;
+  var settings = gb_loadSettingsMap_(sheet).map;
+  var map = gb_parseRevMap_(settings[key]);
+  var next = parseInt(map[id] || '0', 10);
+  if (isNaN(next)) next = 0;
+  map[id] = String(next + 1);
+  gb_upsertSetting_(sheet, key, JSON.stringify(map));
+  return map[id];
+}
+
+function gb_performSaveLocked_(payload) {
+  gb_initSheets_();
+  var settingsSheetForRev = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  GB_SETTINGS_CACHE_ = null;
+  var revCache = gb_loadSettingsMap_(settingsSheetForRev);
+  var currentRev = String(revCache.map.gb_dataRevision || '0');
+  var useOrderRevision = payload && payload.mutations && payload.orderRevisions;
+  if (useOrderRevision) {
+    if (!payload || payload.dataRevision == null || String(payload.dataRevision) === '') {
+      throw new Error('缺少資料版本，請重新載入後再儲存');
+    }
+  } else {
+    gb_requireRevision_(payload, currentRev);
+  }
+  if (payload && payload.mutations) return gb_applyMutationsLocked_(payload, currentRev);
   var ss = SpreadsheetApp.getActive();
   var orderSheet = ss.getSheetByName(GB_SHEET_ORDERS);
-  var journalSheet = ss.getSheetByName(GB_SHEET_JOURNAL);
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
 
-  var last = orderSheet.getLastRow();
-  if (last > 1) orderSheet.getRange(2, 1, last, GB_COLS).clearContent();
+  var rows = gb_buildFlatRows_(payload.groups || [], { skipImages: !!(payload && payload.skipUnchangedImages) });
+  gb_writeOrderSheetSafe_(orderSheet, rows);
 
-  var rows = gb_buildFlatRows_(payload.groups || []);
-  if (rows.length > 0) {
-    orderSheet.getRange(2, 1, 1 + rows.length, GB_COLS).setValues(rows);
-  }
-
-  var jLast = journalSheet.getLastRow();
-  if (jLast > 1) journalSheet.getRange(2, 1, jLast, 7).clearContent();
-  var bankJournal = payload.bankJournal || [];
-  var jRows = bankJournal.map(function (j) {
-    return [j.id, j.date, j.bank, j.type, j.amount, j.category, j.note];
-  });
-  if (jRows.length > 0) {
-    journalSheet.getRange(2, 1, 1 + jRows.length, 7).setValues(jRows);
-  }
+  // 日記帳與團務分開寫入，避免 saveAppData 覆蓋銀行日記帳
 
   if (payload.exchangeRate != null) {
     gb_upsertSetting_(settingsSheet, 'exchangeRate', String(payload.exchangeRate));
@@ -829,6 +1096,7 @@ function gb_performSave_(payload) {
     if (pc.preorderShopUrl != null) gb_upsertSetting_(settingsSheet, 'portalPreorderShopUrl', pc.preorderShopUrl || '');
     if (pc.spotShopUrl != null) gb_upsertSetting_(settingsSheet, 'portalSpotShopUrl', pc.spotShopUrl || '');
     if (pc.footer != null) gb_upsertSetting_(settingsSheet, 'portalFooter', pc.footer || '');
+    if (pc.avatarUrl != null) gb_upsertSetting_(settingsSheet, 'portalAvatarUrl', pc.avatarUrl || '');
     if (pc.announcements != null) gb_upsertSetting_(settingsSheet, 'portalAnnouncementsJson', JSON.stringify(pc.announcements));
     if (pc.faqItems != null) gb_upsertSetting_(settingsSheet, 'portalFaqJson', JSON.stringify(pc.faqItems));
     if (pc.processSteps != null) gb_upsertSetting_(settingsSheet, 'portalProcessStepsJson', JSON.stringify(pc.processSteps));
@@ -838,6 +1106,12 @@ function gb_performSave_(payload) {
     if (pc.homeOpenGroupIds != null) {
       var ids = (pc.homeOpenGroupIds || []).map(function (x) { return String(x || ''); }).filter(Boolean).slice(0, 3);
       gb_upsertSetting_(settingsSheet, 'portalHomeOpenGroupIdsJson', JSON.stringify(ids));
+    }
+    if (pc.socialIconSlots != null) {
+      gb_upsertSetting_(settingsSheet, 'portalSocialIconSlotsJson', JSON.stringify(pc.socialIconSlots));
+    }
+    if (pc.teachCards != null) {
+      gb_upsertSetting_(settingsSheet, 'portalTeachCardsJson', JSON.stringify(pc.teachCards));
     }
   }
   if (payload.paymentReports) {
@@ -849,23 +1123,31 @@ function gb_performSave_(payload) {
   if (payload.customerBalanceMemos) {
     gb_writeCustomerBalanceMemos_(settingsSheet, payload.customerBalanceMemos);
   }
-  return { status: 'success' };
+  if (payload.consolidationShipments) {
+    gb_writeConsolidationShipments_(settingsSheet, payload.consolidationShipments);
+  }
+  var revNum = parseInt(currentRev, 10);
+  if (isNaN(revNum)) revNum = 0;
+  var nextRev = String(revNum + 1);
+  gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+  return { status: 'success', dataRevision: nextRev };
 }
 
 function gb_upsertSetting_(sheet, key, value) {
-  var last = sheet.getLastRow();
-  if (last < 2) {
-    sheet.appendRow([key, value]);
+  var cache = gb_loadSettingsMap_(sheet);
+  var next = value == null ? '' : String(value);
+  if (Object.prototype.hasOwnProperty.call(cache.map, key) && String(cache.map[key] == null ? '' : cache.map[key]) === next) {
     return;
   }
-  var range = sheet.getRange(2, 1, last, 2).getValues();
-  for (var i = 0; i < range.length; i++) {
-    if (String(range[i][0]) === String(key)) {
-      sheet.getRange(i + 2, 2).setValue(value);
-      return;
-    }
+  cache.map[key] = value;
+  var sh = cache.sheet || sheet;
+  var row = cache.rowOf[key];
+  if (row) {
+    sh.getRange(row, 2).setValue(value);
+    return;
   }
-  sheet.appendRow([key, value]);
+  sh.appendRow([key, value]);
+  cache.rowOf[key] = sh.getLastRow();
 }
 
 function gb_readPaymentReports_(settings) {
@@ -911,6 +1193,21 @@ function gb_readCustomerBalanceMemos_(settings) {
 
 function gb_writeCustomerBalanceMemos_(sheet, list) {
   gb_upsertSetting_(sheet, 'customerBalanceMemosJson', JSON.stringify(list || []));
+}
+
+function gb_readConsolidationShipments_(settings) {
+  try {
+    var raw = settings.consolidationShipmentsJson;
+    if (!raw) return [];
+    var parsed = JSON.parse(String(raw));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function gb_writeConsolidationShipments_(sheet, list) {
+  gb_upsertSetting_(sheet, 'consolidationShipmentsJson', JSON.stringify(list || []));
 }
 
 var GB_BANK_VIEWER_LOG_LIMIT = 400;
@@ -1050,14 +1347,7 @@ function gb_loadBankViewerFromSheet_() {
   gb_initSheets_();
   var ss = SpreadsheetApp.getActive();
   var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
-  var settings = {};
-  var sLast = settingsSheet.getLastRow();
-  if (sLast >= 2) {
-    var sRows = settingsSheet.getRange(2, 1, sLast, 2).getValues();
-    for (var si = 0; si < sRows.length; si++) {
-      if (sRows[si][0]) settings[String(sRows[si][0])] = sRows[si][1];
-    }
-  }
+  var settings = gb_loadSettingsMap_(settingsSheet).map;
   return {
     sheet: settingsSheet,
     config: gb_migrateBankPassword_(settingsSheet, settings, gb_readBankViewerConfig_(settings))
@@ -1196,7 +1486,7 @@ function gb_importDataPack_(pl) {
           for (var c = 0; c < GB_COLS; c++) row.push(r[c] != null ? r[c] : '');
           return row;
         });
-        orderSheet.getRange(2, 1, 1 + ovals.length, GB_COLS).setValues(ovals);
+        orderSheet.getRange(2, 1, ovals.length, GB_COLS).setValues(ovals);
       }
     } else {
       var all = gb_fetchAllData_();
@@ -1219,7 +1509,7 @@ function gb_importDataPack_(pl) {
       var olast2 = orderSheet.getLastRow();
       if (olast2 > 1) orderSheet.getRange(2, 1, olast2, GB_COLS).clearContent();
       if (merged.length) {
-        orderSheet.getRange(2, 1, 1 + merged.length, GB_COLS).setValues(merged);
+        orderSheet.getRange(2, 1, merged.length, GB_COLS).setValues(merged);
       }
     }
   }
@@ -1234,7 +1524,7 @@ function gb_importDataPack_(pl) {
         var jvals = jBody.map(function (r) {
           return [r[0] || '', r[1] || '', r[2] || '', r[3] || '', r[4] || '', r[5] || '', r[6] || ''];
         });
-        journalSheet.getRange(2, 1, 1 + jvals.length, 7).setValues(jvals);
+        journalSheet.getRange(2, 1, jvals.length, 7).setValues(jvals);
       }
     } else {
       var existingJ = {};
@@ -1252,7 +1542,7 @@ function gb_importDataPack_(pl) {
       }
       var jlast2 = journalSheet.getLastRow();
       if (jlast2 > 1) journalSheet.getRange(2, 1, jlast2, 7).clearContent();
-      if (jMerged.length) journalSheet.getRange(2, 1, 1 + jMerged.length, 7).setValues(jMerged);
+      if (jMerged.length) journalSheet.getRange(2, 1, jMerged.length, 7).setValues(jMerged);
     }
   }
 
@@ -1439,11 +1729,18 @@ function gb_buildPaymentReportLines_(groups, orderIds) {
 }
 
 function gb_submitPaymentReport_(pl) {
+  return gb_withDocumentLock_(function () {
+    return gb_submitPaymentReportLocked_(pl);
+  });
+}
+
+function gb_submitPaymentReportLocked_(pl) {
   var customerName = pl && pl.customerName ? String(pl.customerName).trim() : '';
   var remittanceDate = pl && pl.remittanceDate ? String(pl.remittanceDate).trim() : '';
   var lastFive = pl && pl.lastFive ? String(pl.lastFive).trim() : '';
   var totalAmount = Math.round(Number(pl && pl.totalAmount) || 0);
   var orderIds = pl && pl.orderIds ? pl.orderIds : [];
+  var clientRequestId = pl && pl.clientRequestId ? String(pl.clientRequestId).trim() : '';
   if (!customerName) return { ok: false, message: '請先查詢訂單' };
   if (!remittanceDate) return { ok: false, message: '請填寫匯款日期' };
   if (!/^\d{5}$/.test(lastFive)) return { ok: false, message: '後五碼需為 5 位數字' };
@@ -1453,6 +1750,23 @@ function gb_submitPaymentReport_(pl) {
   var all = gb_fetchAllData_();
   var groups = all.groups || [];
   var reports = all.paymentReports || [];
+  var wantedKey = orderIds.map(String).sort().join('|');
+  for (var du = 0; du < reports.length; du++) {
+    var existing = reports[du];
+    if (clientRequestId && String(existing.clientRequestId || '') === clientRequestId) {
+      return { ok: true, duplicate: true, reportId: existing.id, message: '此付款回報已送出，無需重複送出' };
+    }
+    if (
+      !clientRequestId &&
+      String(existing.customerName || '').trim() === customerName &&
+      String(existing.remittanceDate || '') === remittanceDate &&
+      String(existing.lastFive || '') === lastFive &&
+      Number(existing.totalAmount || 0) === totalAmount &&
+      (existing.orderIds || []).map(String).sort().join('|') === wantedKey
+    ) {
+      return { ok: true, duplicate: true, reportId: existing.id, message: '相同付款回報已存在，無需重複送出' };
+    }
+  }
   var lines = gb_buildPaymentReportLines_(groups, orderIds);
   if (lines.length !== orderIds.length) {
     return { ok: false, message: '部分訂單不存在或已變更，請重新查詢' };
@@ -1500,6 +1814,7 @@ function gb_submitPaymentReport_(pl) {
     status: 'pending',
     submittedAt: Date.now()
   };
+  if (clientRequestId) report.clientRequestId = clientRequestId;
   var rawMemos = pl && pl.balanceMemos ? pl.balanceMemos : [];
   if (rawMemos && rawMemos.length) {
     var balanceMemos = [];
@@ -1514,10 +1829,15 @@ function gb_submitPaymentReport_(pl) {
   }
   reports.unshift(report);
   var ss = SpreadsheetApp.getActive();
-  gb_writePaymentReports_(ss.getSheetByName(GB_SHEET_SETTINGS), reports);
+  var settingsSheet = ss.getSheetByName(GB_SHEET_SETTINGS);
+  gb_writePaymentReports_(settingsSheet, reports);
+  var nextRev = String(Number(all.dataRevision || 0) + 1);
+  gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+  gb_appendChangeLog_(nextRev, orderIds, []);
   return {
     ok: true,
     reportId: report.id,
+    dataRevision: nextRev,
     message: '付款回報已送出\n將於 2-5 天內完成對帳並更新付款狀態。若超過期限仍未更新，請私訊官方。',
   };
 }
@@ -1535,19 +1855,86 @@ function gb_lineExpectedDeposit_(line, liveOrder) {
   return Math.max(0, Math.round(Number(exp) || 0));
 }
 
+function gb_claimOperation_(opId) {
+  if (!opId) return { proceed: true };
+  var outcome = gb_withDocumentLock_(function () {
+    var prev = gb_opGet_(opId);
+    if (prev && prev.status === 'done' && prev.result) return { proceed: false, result: prev.result };
+    if (prev && prev.status === 'pending_journal') return { proceed: true };
+    if (prev && prev.status === 'claimed' && prev.at && (new Date().getTime() - Number(prev.at)) < 20000) {
+      return { proceed: false, busy: true };
+    }
+    gb_opSet_(opId, { status: 'claimed', at: new Date().getTime() });
+    return { proceed: true };
+  });
+  if (outcome && outcome.busy) {
+    var i;
+    for (i = 0; i < 16; i++) {
+      Utilities.sleep(500);
+      var later = gb_opGet_(opId);
+      if (later && later.status === 'done' && later.result) return { proceed: false, result: later.result };
+    }
+    return { proceed: false, result: { ok: false, message: '同一筆操作正在處理，請稍後再試', operationId: opId } };
+  }
+  return outcome;
+}
+
+function gb_confirmStoredResult_(confirmOpId) {
+  if (!confirmOpId) return null;
+  var prev = gb_opGet_(confirmOpId);
+  if (prev && prev.status === 'done' && prev.result) return prev.result;
+  if (prev && prev.status === 'pending_journal' && prev.journalRow) {
+    var pendingList = gb_fetchAllData_().bankJournal || [];
+    gb_writeJournalSheet_(gb_upsertJournalRows_(pendingList, [prev.journalRow]));
+    var resumed = { ok: true, message: '已確認付款', operationId: confirmOpId };
+    gb_opSet_(confirmOpId, { status: 'done', kind: 'confirm', journalRow: prev.journalRow, result: resumed });
+    return resumed;
+  }
+  return null;
+}
+
+function gb_confirmHealExisting_(reportId, confirmOpId) {
+  if (!confirmOpId) return null;
+  var all = gb_fetchAllData_();
+  var reports = all.paymentReports || [];
+  var report = null;
+  var i;
+  for (i = 0; i < reports.length; i++) if (reports[i].id === reportId) report = reports[i];
+  if (!report || report.status !== 'confirmed') return null;
+  var journalId = 'j_pr_' + confirmOpId;
+  var existing = all.bankJournal || [];
+  var found = null;
+  for (i = 0; i < existing.length; i++) {
+    if (String(existing[i].id) === journalId) found = existing[i];
+  }
+  if (!found) return null;
+  var healed = { ok: true, message: '已確認付款', operationId: confirmOpId };
+  gb_opSet_(confirmOpId, { status: 'done', kind: 'confirm', journalRow: found, result: healed });
+  return healed;
+}
+
 function gb_confirmPaymentReport_(pl) {
   var reportId = pl && pl.reportId ? String(pl.reportId) : '';
   var bank = pl && pl.remittanceBank ? String(pl.remittanceBank) : '待分類';
   var lineDeposits = pl && pl.lineDeposits ? pl.lineDeposits : null;
   var selectedOrderIds = pl && pl.selectedOrderIds ? pl.selectedOrderIds : null;
   if (!reportId) return { ok: false, message: '缺少回報 ID' };
+  var confirmOpId = pl && pl.operationId ? String(pl.operationId) : '';
+  var confirmClaim = gb_claimOperation_(confirmOpId);
+  if (confirmClaim && confirmClaim.result) return confirmClaim.result;
+  var storedConfirm = gb_confirmStoredResult_(confirmOpId);
+  if (storedConfirm) return storedConfirm;
   var all = gb_fetchAllData_();
   var reports = all.paymentReports || [];
   var idx = -1;
   for (var i = 0; i < reports.length; i++) {
     if (reports[i].id === reportId && reports[i].status === 'pending') idx = i;
   }
-  if (idx < 0) return { ok: false, message: '找不到待確認的付款回報' };
+  if (idx < 0) {
+    var healedConfirm = gb_confirmHealExisting_(reportId, confirmOpId);
+    if (healedConfirm) return healedConfirm;
+    return { ok: false, message: '找不到待確認的付款回報' };
+  }
   var report = reports[idx];
   var selected = {};
   if (selectedOrderIds && selectedOrderIds.length) {
@@ -1597,13 +1984,14 @@ function gb_confirmPaymentReport_(pl) {
     });
   }
   var journalRow = {
-    id: 'j_pr_' + Date.now(),
+    id: confirmOpId ? ('j_pr_' + confirmOpId) : ('j_pr_' + Date.now()),
     date: report.remittanceDate,
     bank: bank || '待分類',
     type: '收入',
     amount: totalIn,
     category: '團購訂金',
-    note: report.customerName + ' 付款回報 ' + confirmedLines.length + ' 筆 · 後五碼 ' + report.lastFive
+    lastFive: String(report.lastFive || '').replace(/\D/g, '').slice(-5),
+    note: report.customerName + ' ' + confirmedLines.map(function (l) { return l.groupName; }).join('、')
   };
   var confirmedOrderIds = [];
   for (var coi = 0; coi < confirmedLines.length; coi++) confirmedOrderIds.push(confirmedLines[coi].orderId);
@@ -1621,7 +2009,9 @@ function gb_confirmPaymentReport_(pl) {
     confirmedAt: Date.now(),
     confirmedBank: bank || '待分類',
     journalEntryId: journalRow.id,
-    source: report.source || 'customer'
+    source: report.source || 'customer',
+    clientRequestId: report.clientRequestId || '',
+    balanceMemos: report.balanceMemos || []
   };
   var unselectedLines = [];
   for (var uli = 0; uli < (report.lines || []).length; uli++) {
@@ -1666,12 +2056,19 @@ function gb_confirmPaymentReport_(pl) {
   }
   gb_performSave_({
     groups: groups,
-    bankJournal: [journalRow].concat(all.bankJournal || []),
+    dataRevision: all.dataRevision,
     exchangeRate: all.exchangeRate,
     portalConfig: all.portalConfig,
-    paymentReports: nextReports
+    paymentReports: nextReports,
+    skipUnchangedImages: true
   });
-  return { ok: true, message: '已確認付款' };
+  if (confirmOpId) {
+    gb_opSet_(confirmOpId, { status: 'pending_journal', kind: 'confirm', journalRow: journalRow, reportId: reportId });
+  }
+  gb_writeJournalSheet_(gb_upsertJournalRows_(gb_fetchAllData_().bankJournal || [], [journalRow]));
+  var confirmResult = { ok: true, message: '已確認付款', operationId: confirmOpId };
+  if (confirmOpId) gb_opSet_(confirmOpId, { status: 'done', kind: 'confirm', journalRow: journalRow, result: confirmResult });
+  return confirmResult;
 }
 
 function gb_updatePaymentReportLineFlags_(pl) {
@@ -1721,7 +2118,14 @@ function gb_supplementPaymentReport_(pl) {
     if (report.lines[li].orderId === orderId) line = report.lines[li];
   }
   if (!line) return { ok: false, message: '找不到訂單' };
-  if (!line.needsSupplement) return { ok: false, message: '此筆未標記需補款' };
+  var opId = pl && pl.operationId ? String(pl.operationId) : '';
+  if (!opId) return { ok: false, message: '缺少操作編號' };
+  var supplementClaim = gb_claimOperation_(opId);
+  if (supplementClaim && supplementClaim.result) return supplementClaim.result;
+  var prevOp = gb_opGet_(opId);
+  if (prevOp && prevOp.status === 'done') return prevOp.result;
+  var resumeJournal = prevOp && (prevOp.status === 'pending_journal' || prevOp.status === 'applying');
+  if (!resumeJournal && !line.needsSupplement) return { ok: false, message: '此筆未標記需補款' };
 
   var supplementInfo = gb_formatRemittancePaymentInfo_(
     remittanceDate,
@@ -1729,20 +2133,26 @@ function gb_supplementPaymentReport_(pl) {
     note || ('補款' + addAmount)
   );
   var groups = all.groups || [];
+  var targetDeposit = prevOp && prevOp.targetDeposit != null
+    ? Number(prevOp.targetDeposit)
+    : null;
   for (var gi = 0; gi < groups.length; gi++) {
     var orders = groups[gi].orders || [];
     for (var oi = 0; oi < orders.length; oi++) {
       if (orders[oi].id !== orderId) continue;
-      var newDeposit = (Number(orders[oi].deposit) || 0) + addAmount;
+      if (targetDeposit == null) targetDeposit = (Number(orders[oi].deposit) || 0) + addAmount;
+      var newDeposit = targetDeposit;
       var payInfo = orders[oi].paymentInfo || '';
       orders[oi].paymentStatus = '已付訂金';
       orders[oi].deposit = newDeposit;
       orders[oi].balance = gb_calcOrderBalance_(orders[oi].totalTwd, newDeposit, orders[oi].domesticShip, orders[oi].intlShip);
-      orders[oi].paymentInfo = payInfo ? payInfo + ' · ' + supplementInfo : supplementInfo;
+      if (payInfo.indexOf(supplementInfo) < 0) {
+        orders[oi].paymentInfo = payInfo ? payInfo + ' · ' + supplementInfo : supplementInfo;
+      }
     }
   }
   var journalRow = {
-    id: 'j_sup_' + Date.now(),
+    id: 'j_sup_' + opId,
     date: remittanceDate,
     bank: remittanceBank || '待分類',
     type: '收入',
@@ -1750,7 +2160,9 @@ function gb_supplementPaymentReport_(pl) {
     category: '團購訂金',
     note: report.customerName + ' 補款 ' + line.groupName + ' · ' + (note || '補款')
   };
-  var newLineDep = line.deposit + addAmount;
+  var newLineDep = resumeJournal && prevOp && prevOp.targetDeposit != null
+    ? Number(prevOp.targetDeposit)
+    : line.deposit + addAmount;
   var lineExp = gb_lineExpectedDeposit_(line);
   var updatedLine = {
     orderId: line.orderId,
@@ -1760,7 +2172,7 @@ function gb_supplementPaymentReport_(pl) {
     expectedDeposit: line.expectedDeposit != null ? line.expectedDeposit : line.deposit,
     deposit: newLineDep,
     needsSupplement: newLineDep < lineExp,
-    supplementTotal: (line.supplementTotal || 0) + addAmount
+    supplementTotal: resumeJournal ? (line.supplementTotal || 0) : (line.supplementTotal || 0) + addAmount
   };
   var nextLines = [];
   for (var nl = 0; nl < (report.lines || []).length; nl++) {
@@ -1771,7 +2183,7 @@ function gb_supplementPaymentReport_(pl) {
     customerName: report.customerName,
     remittanceDate: report.remittanceDate,
     lastFive: report.lastFive,
-    totalAmount: report.totalAmount + addAmount,
+    totalAmount: resumeJournal ? report.totalAmount : report.totalAmount + addAmount,
     reportedTotalAmount: report.reportedTotalAmount != null ? report.reportedTotalAmount : report.totalAmount,
     orderIds: report.orderIds,
     lines: nextLines,
@@ -1782,14 +2194,37 @@ function gb_supplementPaymentReport_(pl) {
     journalEntryId: report.journalEntryId,
     source: report.source || 'customer'
   };
+  gb_opSet_(opId, {
+    status: 'applying',
+    targetDeposit: targetDeposit,
+    addAmount: addAmount,
+    orderId: orderId
+  });
   gb_performSave_({
     groups: groups,
-    bankJournal: [journalRow].concat(all.bankJournal || []),
+    dataRevision: all.dataRevision,
     exchangeRate: all.exchangeRate,
     portalConfig: all.portalConfig,
-    paymentReports: reports
+    paymentReports: reports,
+    skipUnchangedImages: true
   });
-  return { ok: true, message: '補款已入帳' };
+  gb_opSet_(opId, {
+    status: 'pending_journal',
+    targetDeposit: targetDeposit,
+    addAmount: addAmount,
+    orderId: orderId
+  });
+  var journalList = gb_fetchAllData_().bankJournal || [];
+  gb_writeJournalSheet_(gb_upsertJournalRows_(journalList, [journalRow]));
+  var supplementResult = { ok: true, message: '補款已入帳', operationId: opId, dataRevision: gb_currentRevision_() };
+  gb_opSet_(opId, {
+    status: 'done',
+    targetDeposit: targetDeposit,
+    addAmount: addAmount,
+    orderId: orderId,
+    result: supplementResult
+  });
+  return supplementResult;
 }
 
 function gb_findPaymentReportJournal_(bankJournal, report) {
@@ -1814,15 +2249,7 @@ function gb_findPaymentReportJournal_(bankJournal, report) {
 }
 
 function gb_applyRevertPaymentReport_(groups, bankJournal, report) {
-  var journal = gb_findPaymentReportJournal_(bankJournal || [], report);
-  var nextJournal = [];
-  if (journal) {
-    for (var ji = 0; ji < bankJournal.length; ji++) {
-      if (bankJournal[ji].id !== journal.id) nextJournal.push(bankJournal[ji]);
-    }
-  } else {
-    nextJournal = bankJournal || [];
-  }
+  var nextJournal = bankJournal || [];
   var target = {};
   for (var ti = 0; ti < report.orderIds.length; ti++) target[report.orderIds[ti]] = true;
   var expectedByOrder = {};
@@ -1865,7 +2292,8 @@ function gb_applyRevertPaymentReport_(groups, bankJournal, report) {
     orderIds: report.orderIds,
     lines: nextLines,
     status: 'pending',
-    submittedAt: report.submittedAt
+    submittedAt: report.submittedAt,
+    journalEntryId: report.journalEntryId
   };
   return { groups: groups, bankJournal: nextJournal, report: nextReport };
 }
@@ -1885,11 +2313,23 @@ function gb_revertPaymentReport_(pl) {
   gb_performSave_({
     groups: applied.groups,
     bankJournal: applied.bankJournal,
+    dataRevision: all.dataRevision,
     exchangeRate: all.exchangeRate,
     portalConfig: all.portalConfig,
-    paymentReports: reports
+    paymentReports: reports,
+    skipUnchangedImages: true
   });
-  return { ok: true, message: '已返回待確認' };
+  var revertOp = pl && pl.operationId ? String(pl.operationId) : ('revert_' + reportId);
+  gb_opSet_(revertOp, {
+    status: 'done',
+    kind: 'revert',
+    reportId: reportId,
+    journalKept: true,
+    journalEntryId: reports[idx].journalEntryId || '',
+    orderStatus: '未付款',
+    result: { ok: true, message: '已返回待確認', operationId: revertOp }
+  });
+  return { ok: true, message: '已返回待確認', operationId: revertOp };
 }
 
 function gb_deletePaymentReport_(pl) {
@@ -1916,11 +2356,368 @@ function gb_deletePaymentReport_(pl) {
   gb_performSave_({
     groups: groups,
     bankJournal: bankJournal,
+    dataRevision: all.dataRevision,
     exchangeRate: all.exchangeRate,
     portalConfig: all.portalConfig,
-    paymentReports: nextReports
+    paymentReports: nextReports,
+    skipUnchangedImages: true
   });
   return { ok: true, message: '已刪除付款回報' };
+}
+
+
+/* --- next: --- */
+
+function gb_assertWritableSpreadsheet_() {
+  var guard = PropertiesService.getScriptProperties().getProperty('HEINA_ONLY_SPREADSHEET_ID');
+  if (!guard) return;
+  var id = SpreadsheetApp.getActive().getId();
+  if (id !== guard) throw new Error('拒絕寫入：目前試算表不是允許的測試表');
+}
+
+function gb_withDocumentLock_(fn) {
+  gb_assertWritableSpreadsheet_();
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(25000)) throw new Error('另一筆寫入進行中，請稍候再試');
+  try {
+    GB_SETTINGS_CACHE_ = null;
+    return fn();
+  } finally {
+    GB_SETTINGS_CACHE_ = null;
+    lock.releaseLock();
+  }
+}
+
+function gb_requireRevision_(payload, currentRev) {
+  if (!payload || payload.dataRevision == null || String(payload.dataRevision) === '') {
+    throw new Error('缺少資料版本，請重新載入後再儲存');
+  }
+  if (String(payload.dataRevision) !== String(currentRev)) {
+    throw new Error('資料已在另一個畫面更新，請重新整理後再儲存，避免蓋過剛改的內容。');
+  }
+}
+
+function gb_currentRevision_() {
+  GB_SETTINGS_CACHE_ = null;
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var cache = gb_loadSettingsMap_(sheet);
+  return String(cache.map.gb_dataRevision || '0');
+}
+
+
+
+function gb_opGet_(id) {
+  if (!id) return null;
+  GB_SETTINGS_CACHE_ = null;
+  var cache = gb_loadSettingsMap_();
+  var raw = cache.map['gb_op_' + id];
+  if (!raw) return null;
+  try { return JSON.parse(String(raw)); } catch (e) { return null; }
+}
+
+function gb_opSet_(id, obj) {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  gb_upsertSetting_(sheet, 'gb_op_' + id, JSON.stringify(obj));
+}
+
+function gb_writeOrderSheetSafe_(sheet, rows) {
+  var last = sheet.getLastRow();
+  var oldCount = Math.max(0, last - 1);
+  if (rows && rows.length) sheet.getRange(2, 1, rows.length, GB_COLS).setValues(rows);
+  if (oldCount > (rows ? rows.length : 0)) {
+    sheet.getRange(2 + (rows ? rows.length : 0), 1, oldCount - (rows ? rows.length : 0), GB_COLS).clearContent();
+  }
+}
+
+function gb_replaceGroupRows_(sheet, groupId, newRows, opId) {
+  var last = sheet.getLastRow();
+  var existing = last > 1 ? sheet.getRange(2, 1, last - 1, GB_COLS).getValues() : [];
+  var start = -1;
+  var end = -1;
+  var i;
+  for (i = 0; i < existing.length; i++) {
+    if (String(existing[i][GB_COL.GROUP_ID]) === String(groupId)) {
+      if (start < 0) start = i;
+      end = i;
+    }
+  }
+  var backup = start < 0 ? [] : existing.slice(start, end + 1);
+  gb_opSet_(opId + ':' + groupId, { status: 'backup', rowCount: backup.length });
+  if (start < 0) {
+    if (!newRows.length) return;
+    sheet.getRange(existing.length + 2, 1, newRows.length, GB_COLS).setValues(newRows);
+    return;
+  }
+  var oldLen = end - start + 1;
+  var sheetStart = start + 2;
+  if (newRows.length === oldLen) {
+    sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
+    return;
+  }
+  sheet.deleteRows(sheetStart, oldLen);
+  if (newRows.length) {
+    sheet.insertRows(sheetStart, newRows.length);
+    sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
+  }
+}
+
+function gb_takeOrder_(groups, orderId) {
+  var gi, oi, orders;
+  for (gi = 0; gi < groups.length; gi++) {
+    orders = groups[gi].orders || [];
+    for (oi = 0; oi < orders.length; oi++) {
+      if (orders[oi].id === orderId) {
+        var order = orders.splice(oi, 1)[0];
+        groups[gi].orders = orders;
+        return { groupId: groups[gi].id, order: order };
+      }
+    }
+  }
+  return null;
+}
+
+function gb_ensureGroup_(groups, groupId, seed) {
+  var i;
+  for (i = 0; i < groups.length; i++) if (groups[i].id === groupId) return groups[i];
+  var g = seed || {
+    id: groupId, name: groupId, status: '已登記', closingDate: '', saleEndDate: '',
+    officialShipDate: '', jpyAmount: '', orderId: '', logisticsId: '', purchaseLink: '', orders: []
+  };
+  g.id = groupId;
+  g.orders = g.orders || [];
+  groups.push(g);
+  return g;
+}
+
+function gb_rowsForOneOrder_(group, orderId) {
+  var clone = {};
+  var k;
+  for (k in group) clone[k] = group[k];
+  var orders = [];
+  var i;
+  for (i = 0; i < (group.orders || []).length; i++) {
+    if (group.orders[i].id === orderId) orders.push(group.orders[i]);
+  }
+  clone.orders = orders;
+  return gb_buildFlatRows_([clone], { skipSettings: true });
+}
+
+function gb_replaceOrderRows_(sheet, orderId, newRows, opId) {
+  var last = sheet.getLastRow();
+  var existing = last > 1 ? sheet.getRange(2, 1, last - 1, GB_COLS).getValues() : [];
+  var indexes = [];
+  var i;
+  for (i = 0; i < existing.length; i++) {
+    if (String(existing[i][GB_COL.ORDER_ID]) === String(orderId)) indexes.push(i);
+  }
+  var backup = [];
+  for (i = 0; i < indexes.length; i++) backup.push(existing[indexes[i]]);
+  gb_opSet_(opId + ':order:' + orderId, { status: 'backup', rowCount: backup.length });
+  if (!indexes.length) {
+    if (!newRows.length) return { rows: 0 };
+    sheet.getRange(existing.length + 2, 1, newRows.length, GB_COLS).setValues(newRows);
+    return { rows: newRows.length };
+  }
+  var contiguous = indexes[indexes.length - 1] - indexes[0] + 1 === indexes.length;
+  if (!contiguous) throw new Error('訂單列不連續，已停止寫入以免影響其他訂單');
+  var sheetStart = indexes[0] + 2;
+  if (newRows.length === indexes.length) {
+    sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
+    return { rows: newRows.length };
+  }
+  sheet.deleteRows(sheetStart, indexes.length);
+  if (newRows.length) {
+    sheet.insertRows(sheetStart, newRows.length);
+    sheet.getRange(sheetStart, 1, newRows.length, GB_COLS).setValues(newRows);
+  }
+  return { rows: newRows.length };
+}
+
+function gb_patchSharedGroupColumns_(sheet, group) {
+  var last = sheet.getLastRow();
+  if (last < 2) return { rows: 0, columns: 0 };
+  var existing = sheet.getRange(2, 1, last - 1, GB_COLS).getValues();
+  var sample = gb_buildFlatRows_([group], { skipSettings: true });
+  var sampleRow = null;
+  var i;
+  for (i = 0; i < sample.length; i++) {
+    if (String(sample[i][GB_COL.GROUP_ID]) === String(group.id)) { sampleRow = sample[i]; break; }
+  }
+  if (!sampleRow) return { rows: 0, columns: 0 };
+  var values = [];
+  for (i = GB_COL.SHIP_DATE; i <= GB_COL.GROUP_LINK; i++) values.push(sampleRow[i]);
+  var n = 0;
+  for (i = 0; i < existing.length; i++) {
+    if (String(existing[i][GB_COL.GROUP_ID]) !== String(group.id)) continue;
+    var same = true;
+    var c;
+    for (c = 0; c < values.length; c++) {
+      if (String(existing[i][GB_COL.SHIP_DATE + c] == null ? '' : existing[i][GB_COL.SHIP_DATE + c]) !== String(values[c] == null ? '' : values[c])) same = false;
+    }
+    if (same) continue;
+    sheet.getRange(i + 2, GB_COL.SHIP_DATE + 1, 1, values.length).setValues([values]);
+    n++;
+  }
+  return { rows: n, columns: values.length };
+}
+
+function gb_appendChangeLog_(rev, orderIds, groupIds) {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  GB_SETTINGS_CACHE_ = null;
+  var raw = gb_loadSettingsMap_(sheet).map.gb_changeLog || '[]';
+  var list = [];
+  try { list = JSON.parse(String(raw)); } catch (e2) { list = []; }
+  if (!Array.isArray(list)) list = [];
+  list.push({ rev: String(rev), orderIds: orderIds, groupIds: groupIds, at: new Date().getTime() });
+  if (list.length > 40) list = list.slice(list.length - 40);
+  gb_upsertSetting_(sheet, 'gb_changeLog', JSON.stringify(list));
+}
+
+function gb_findGroup_(groups, groupId) {
+  var i;
+  for (i = 0; i < groups.length; i++) if (groups[i].id === groupId) return groups[i];
+  return null;
+}
+
+function gb_applyMutationsLocked_(payload, currentRev) {
+  var all = gb_fetchAllData_();
+  var groups = all.groups || [];
+  var affected = {};
+  var orderOps = {};
+  var patchedGroups = {};
+  var mutations = payload.mutations || [];
+  payload.orderRevisions = payload.orderRevisions || {};
+  payload.groupRevisions = payload.groupRevisions || {};
+  var mi, m, found, g, order, oi, k;
+  for (mi = 0; mi < mutations.length; mi++) {
+    m = mutations[mi];
+    if (m.op === 'deleteOrder') {
+      found = gb_takeOrder_(groups, m.orderId);
+      if (found) {
+        affected[found.groupId] = true;
+        orderOps[m.orderId] = { mode: 'delete', groupId: found.groupId };
+      }
+    } else if (m.op === 'upsertOrder') {
+      found = gb_takeOrder_(groups, m.order.id);
+      if (found && found.groupId !== m.groupId) affected[found.groupId] = true;
+      g = gb_ensureGroup_(groups, m.groupId, m.group || null);
+      order = m.order;
+      if (order.items && order.items.length) order.totalTwd = gb_calcItemsTotalTwd_(order.items);
+      order.balance = gb_calcOrderBalance_(order.totalTwd, order.deposit, order.domesticShip, order.intlShip);
+      var replaced = false;
+      for (oi = 0; oi < g.orders.length; oi++) {
+        if (g.orders[oi].id === order.id) { g.orders[oi] = order; replaced = true; }
+      }
+      if (!replaced) g.orders.push(order);
+      affected[m.groupId] = true;
+      orderOps[order.id] = { mode: 'upsert', groupId: m.groupId };
+    } else if (m.op === 'patchGroup') {
+      g = gb_ensureGroup_(groups, m.groupId, null);
+      var fields = m.fields || {};
+      var patchable = {
+        officialShipDate: true, name: true, status: true, closingDate: true, saleEndDate: true,
+        purchaseDate: true, jpyAmount: true, orderId: true, logisticsId: true, purchaseLink: true
+      };
+      for (k in fields) {
+        if (k === 'orders' || k === 'id' || k === 'groupRevision') continue;
+        if (!patchable[k]) throw new Error('不支援用局部更新修改這個團務欄位：' + k);
+        g[k] = fields[k];
+      }
+      affected[m.groupId] = true;
+      patchedGroups[m.groupId] = true;
+    }
+  }
+  var revSettings = gb_loadSettingsMap_().map;
+  for (oid in orderOps) {
+    if (payload.orderRevisions[oid] == null || String(payload.orderRevisions[oid]) === '') {
+      throw new Error('缺少這筆訂單的版本，請重新載入後再儲存。');
+    }
+    if (String(payload.orderRevisions[oid]) !== gb_orderRev_(revSettings, oid)) {
+      throw new Error('這筆訂單已在另一個畫面更新，請重新整理後再儲存。');
+    }
+  }
+  for (gid in patchedGroups) {
+    if (payload.groupRevisions[gid] == null || String(payload.groupRevisions[gid]) === '') {
+      throw new Error('缺少這個團的共同欄位版本，請重新載入後再儲存。');
+    }
+    if (String(payload.groupRevisions[gid]) !== gb_groupRev_(revSettings, gid)) {
+      throw new Error('這個團的共同欄位已在另一個畫面更新，請重新整理後再儲存。');
+    }
+  }
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_ORDERS);
+  var opId = payload.operationId || ('mut_' + new Date().getTime());
+  var writes = [];
+  var oid;
+  for (oid in orderOps) {
+    if (orderOps[oid].mode === 'delete') {
+      var removed = gb_replaceOrderRows_(sheet, oid, [], opId);
+      writes.push({ orderId: oid, rows: removed.rows, mode: 'delete' });
+    } else {
+      g = gb_findGroup_(groups, orderOps[oid].groupId);
+      var built = g ? gb_rowsForOneOrder_(g, oid) : [];
+      var one = gb_replaceOrderRows_(sheet, oid, built, opId);
+      writes.push({ orderId: oid, rows: one.rows, mode: 'order', columns: GB_COLS });
+    }
+  }
+  var gid;
+  for (gid in patchedGroups) {
+    g = gb_findGroup_(groups, gid);
+    if (!g) continue;
+    var patched = gb_patchSharedGroupColumns_(sheet, g);
+    writes.push({ groupId: gid, rows: patched.rows, columns: patched.columns, mode: 'groupFields' });
+  }
+  var rollups = [];
+  for (gid in affected) {
+    var check = gb_rawGroupCheck_(gid);
+    if (!check.ok) throw new Error('整團彙整與明細不一致：' + gid);
+    rollups.push(check);
+  }
+  var settingsSheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_SETTINGS);
+  var revNum = parseInt(currentRev, 10);
+  if (isNaN(revNum)) revNum = 0;
+  var nextRev = String(revNum + 1);
+  var orderIdList = [];
+  var groupIdList = [];
+  for (oid in orderOps) orderIdList.push(oid);
+  for (gid in affected) groupIdList.push(gid);
+  if (payload.paymentReports) gb_writePaymentReports_(settingsSheet, payload.paymentReports);
+  if (payload.consolidationShipments) gb_writeConsolidationShipments_(settingsSheet, payload.consolidationShipments);
+  gb_upsertSetting_(settingsSheet, 'gb_dataRevision', nextRev);
+  var orderRevisionsOut = {};
+  var groupRevisionsOut = {};
+  for (oid in orderOps) orderRevisionsOut[oid] = gb_bumpRevMap_(settingsSheet, 'gb_orderRevMap', oid);
+  for (gid in patchedGroups) groupRevisionsOut[gid] = gb_bumpRevMap_(settingsSheet, 'gb_groupRevMap', gid);
+  gb_appendChangeLog_(nextRev, orderIdList, groupIdList);
+  return {
+    status: 'success', dataRevision: nextRev, rollups: rollups, writes: writes, sync: 'complete', operationId: opId,
+    orderRevisions: orderRevisionsOut, groupRevisions: groupRevisionsOut
+  };
+}
+
+function gb_rawGroupCheck_(groupId) {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(GB_SHEET_ORDERS);
+  var last = sheet.getLastRow();
+  var rows = last > 1 ? sheet.getRange(2, 1, last - 1, GB_COLS).getValues() : [];
+  var byOrder = {};
+  var orderIds = [];
+  var total = 0;
+  var i;
+  for (i = 0; i < rows.length; i++) {
+    if (String(rows[i][GB_COL.GROUP_ID]) !== String(groupId)) continue;
+    var oid = String(rows[i][GB_COL.ORDER_ID] || '');
+    if (!oid) continue;
+    var sig = [GB_COL.TOTAL_TWD, GB_COL.DEPOSIT, GB_COL.DOMESTIC, GB_COL.INTL, GB_COL.BALANCE, GB_COL.PAY_STATUS, GB_COL.PAYMENT_INFO].map(function (c) {
+      return String(rows[i][c] == null ? '' : rows[i][c]);
+    }).join('|');
+    if (!byOrder[oid]) {
+      byOrder[oid] = sig;
+      orderIds.push(oid);
+      total += Number(rows[i][GB_COL.TOTAL_TWD]) || 0;
+    } else if (byOrder[oid] !== sig) {
+      return { ok: false, groupId: groupId, orderId: oid };
+    }
+  }
+  return { ok: true, groupId: groupId, orderCount: orderIds.length, totalTwd: total };
 }
 
 
@@ -1975,7 +2772,7 @@ function ld_ss_() {
       '找不到試算表：請將 Apps Script「綁定」到目標 Google 試算表（擴充功能 → Apps Script），' +
         '或在指令碼屬性設定 ' +
         LD_PROP_SPREADSHEET_ID +
-        ' 後執行 ld_setSpreadsheetIdForTests_(試算表ID)。'
+        ' 後設定 Apps Script 指令碼屬性。'
     );
   }
   ld_cacheSpreadsheetId_(ss);
@@ -1999,14 +2796,6 @@ function ld_cacheSpreadsheetId_(ss) {
  * 手動綁定試算表 ID（供獨立 GAS 專案或編輯器 smoke test 使用）。
  * @param {string} spreadsheetId
  */
-function ld_setSpreadsheetIdForTests_(spreadsheetId) {
-  var id = String(spreadsheetId || '').trim();
-  if (!id) throw new Error('請提供試算表 ID');
-  SpreadsheetApp.openById(id);
-  PropertiesService.getScriptProperties().setProperty(LD_PROP_SPREADSHEET_ID, id);
-  ld_ssCache_ = null;
-  return { ok: true, spreadsheetId: id };
-}
 
 function ld_flush_() {
   try {
@@ -2517,263 +3306,6 @@ function ld_resetSheetsForClient_(clientId) {
 
 /* --- next: --- */
 
-/**
-
- * Ledger smoke test for Apps Script.
-
- * 用來快速驗證「記帳」資料層是否正常（建行程 -> 寫分錄 -> 讀回）。
-
- *
-
- * 執行方式（Apps Script 編輯器）：
-
- * 1) 確認專案已「綁定」試算表，或已設定 Script Property：HEINA_SPREADSHEET_ID
-
- * 2) 選函式 `runLedgerSmokeTest`
-
- * 3) 按「執行」並完成授權
-
- * 4) 到 Execution log 看 JSON；通過時試算表「行程」「記帳明細」會各多一列
-
- */
-
-function runLedgerSmokeTest() {
-
-  var result = ld_selfTest_('ledger-smoke');
-
-  Logger.log(JSON.stringify(result, null, 2));
-
-  try {
-
-    var ss = ld_ss_();
-
-    Logger.log('試算表：' + ss.getName() + ' | ' + ss.getUrl());
-
-  } catch (e) {
-
-    Logger.log('試算表：無法取得（' + String(e && e.message ? e.message : e) + '）');
-
-  }
-
-  return result;
-
-}
-
-
-
-/**
-
- * 內部測試：回傳可供前端或手動檢查的摘要。
-
- * @param {string} clientId
-
- * @return {{ok:boolean, message:string, detail:Object}}
-
- */
-
-function ld_selfTest_(clientId) {
-
-  var cid = String(clientId || 'ledger-smoke');
-
-  var detail = { clientId: cid, steps: [] };
-
-  function step(name, ok, extra) {
-
-    var row = { step: name, ok: !!ok };
-
-    if (extra) {
-
-      for (var k in extra) {
-
-        if (Object.prototype.hasOwnProperty.call(extra, k)) row[k] = extra[k];
-
-      }
-
-    }
-
-    detail.steps.push(row);
-
-    return !!ok;
-
-  }
-
-
-
-  try {
-
-    var ss;
-
-    try {
-
-      ss = ld_ss_();
-
-      step('resolveSpreadsheet', true, {
-
-        spreadsheetId: ss.getId(),
-
-        spreadsheetName: ss.getName(),
-
-        spreadsheetUrl: ss.getUrl()
-
-      });
-
-    } catch (e0) {
-
-      step('resolveSpreadsheet', false, { error: String(e0 && e0.message ? e0.message : e0) });
-
-      return {
-
-        ok: false,
-
-        message: '無法連到試算表（請綁定試算表或設定 HEINA_SPREADSHEET_ID）',
-
-        detail: detail
-
-      };
-
-    }
-
-
-
-    ld_ensureSheets_();
-
-    step('ensureSheets', true, {});
-
-
-
-    var txSh = ss.getSheetByName('記帳明細');
-
-    var rowsBefore = txSh ? Math.max(0, txSh.getLastRow() - 1) : 0;
-
-
-
-    var trip = ld_createTrip_(cid, 'Smoke Test ' + new Date().toISOString());
-
-    step('createTrip', !!(trip && trip.id), { tripId: trip && trip.id });
-
-
-
-    var tx = ld_addTransaction_(cid, {
-
-      tripId: trip.id,
-
-      amount: 123,
-
-      type: 'business',
-
-      category: '代購成本',
-
-      date: new Date().toISOString().slice(0, 10),
-
-      note: 'smoke-test',
-
-      payMethod: '現金',
-
-      currency: 'JPY'
-
-    });
-
-    step('addTransaction', !!(tx && tx.id), { txId: tx && tx.id });
-
-
-
-    var rowsAfter = txSh ? Math.max(0, txSh.getLastRow() - 1) : 0;
-
-    var rowIncreased = rowsAfter > rowsBefore;
-
-    step('sheetRowAppended', rowIncreased, { rowsBefore: rowsBefore, rowsAfter: rowsAfter });
-
-
-
-    if (!rowIncreased) {
-
-      return {
-
-        ok: false,
-
-        message: '寫入試算表失敗：記帳明細列數未增加（可能被保護或無編輯權）',
-
-        detail: Object.assign(detail, { tripId: trip.id, txId: tx.id })
-
-      };
-
-    }
-
-
-
-    var init = ld_getInitData_(cid);
-
-    var txList = Array.isArray(init.transactions) ? init.transactions : [];
-
-    var found = txList.some(function (x) {
-
-      return String(x.id) === String(tx.id);
-
-    });
-
-    step('readBackInit', found, { txCount: txList.length });
-
-
-
-    if (!found) {
-
-      return {
-
-        ok: false,
-
-        message: '讀回失敗：分錄已寫入試算表，但 getInitData 找不到（請檢查表頭／裝置ID 欄）',
-
-        detail: Object.assign(detail, { tripId: trip.id, txId: tx.id, txCount: txList.length })
-
-      };
-
-    }
-
-
-
-    return {
-
-      ok: true,
-
-      message: 'ledger smoke test passed',
-
-      detail: Object.assign(detail, {
-
-        tripId: trip.id,
-
-        txId: tx.id,
-
-        txCount: txList.length,
-
-        currentTripId: init.currentTripId || ''
-
-      })
-
-    };
-
-  } catch (e) {
-
-    step('exception', false, { error: String(e && e.message ? e.message : e) });
-
-    return {
-
-      ok: false,
-
-      message: 'ledger smoke test exception',
-
-      detail: detail
-
-    };
-
-  }
-
-}
-
-
-
-
-/* --- next: --- */
-
 /** Preorder — normalized Groups / Orders / Items on the active spreadsheet */
 
 var PO_SHEET_GROUPS = 'Groups';
@@ -3139,7 +3671,6 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Heina Suite')
     .addItem('初始化分頁（團購／記帳／預購）', 'heinaSuiteSetupSheets')
-    .addItem('記帳 Smoke Test（寫入試算表）', 'runLedgerSmokeTestFromMenu_')
     .addToUi();
 }
 
@@ -3149,15 +3680,6 @@ function heinaSuiteSetupSheets() {
   po_ensureSheets_(SpreadsheetApp.getActiveSpreadsheet());
   shub_ensureSheets_();
   SpreadsheetApp.getUi().alert('已檢查並建立缺少的分頁與表頭（若已存在則保留）。');
-}
-
-/** 從試算表選單執行記帳 smoke test（會實際寫入一筆測試資料） */
-function runLedgerSmokeTestFromMenu_() {
-  var result = runLedgerSmokeTest();
-  var msg = result.ok
-    ? '通過：已寫入測試行程與分錄。\n' + JSON.stringify(result.detail, null, 2)
-    : '失敗：' + result.message + '\n' + JSON.stringify(result.detail, null, 2);
-  SpreadsheetApp.getUi().alert(msg.slice(0, 1800));
 }
 
 
@@ -3226,7 +3748,7 @@ function shub_put_(category, key, value, note) {
     }
   }
   if (row > 0) {
-    sh.getRange(row, 3, row, 5).setValues([[json, now, n]]);
+    sh.getRange(row, 3, 1, 3).setValues([[json, now, n]]);
   } else {
     sh.appendRow([cat, k, json, now, n]);
     row = sh.getLastRow();
@@ -3348,14 +3870,6 @@ function shub_tryParseJson_(raw) {
 }
 
 /** 手動測試：執行後看 Execution log */
-function runSystemHubSmokeTest() {
-  shub_ensureSheets_();
-  shub_put_('smoke', 'counter', { n: 1 }, 'test');
-  var g = shub_get_('smoke', 'counter');
-  shub_put_('smoke', 'counter', { n: (g && g.value && g.value.n ? g.value.n : 0) + 1 }, 'bump');
-  Logger.log(JSON.stringify({ get: shub_get_('smoke', 'counter'), list: shub_list_('smoke') }, null, 2));
-  return shub_get_('smoke', 'counter');
-}
 
 
 /* --- next: --- */
@@ -3526,6 +4040,7 @@ function heinaIsPublicAction_(mod, act) {
   if (mod === 'auth' && act === 'login') return true;
   if (mod === 'groupbuy') {
     if (act === 'customerLookup') return true;
+    if (act === 'publicRevision') return true;
     if (act === 'changeLookupPin') return true;
     if (act === 'submitPaymentReport') return true;
     if (act === 'listPublicGroups') return true;
@@ -3562,10 +4077,16 @@ function unifiedApi(json) {
   }
   if (mod === 'groupbuy') {
     if (act === 'getAppData') return gb_fetchAllData_();
+    if (act === 'peekRevision') return gb_peekRevision_();
+    if (act === 'fetchSlice') return gb_fetchSlice_(pl);
     if (act === 'saveAppData') return gb_performSave_(pl);
+    if (act === 'saveBankJournal') return gb_saveBankJournal_(pl);
+    if (act === 'deleteBankJournalRows') return gb_deleteBankJournalRows_(pl);
+    if (act === 'restoreBankJournalRows') return gb_restoreBankJournalRows_(pl);
     if (act === 'syncPortalLookupCustomers') return gb_syncPortalLookupCustomers_(pl);
     if (act === 'changeLookupPin') return gb_changeLookupPin_(pl);
     if (act === 'customerLookup') return gb_customerLookup_(pl);
+    if (act === 'publicRevision') return gb_publicRevision_();
     if (act === 'submitPaymentReport') return gb_submitPaymentReport_(pl);
     if (act === 'confirmPaymentReport') return gb_confirmPaymentReport_(pl);
     if (act === 'deletePaymentReport') return gb_deletePaymentReport_(pl);

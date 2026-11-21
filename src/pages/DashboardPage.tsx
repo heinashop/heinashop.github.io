@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { Btn } from '../components/ui'
 import { useApi } from '../context/useApi'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
 import type { GroupBuyAppData } from '../api/types'
 import { useDaigouStore } from '../daigou/store'
 import { commercialDashboard, type PendingDepositCustomerRow } from '../daigou/commercialDashboard'
@@ -73,6 +74,9 @@ export function DashboardPage() {
   useEffect(() => {
     void loadGroupbuyPending()
   }, [loadGroupbuyPending])
+  useRemoteSlice(() => {
+    void loadGroupbuyPending()
+  })
 
   const pendingDepositRows = useMemo(
     () => mergePendingDepositRows(groupbuyPending, dash.pendingDepositByCustomer),

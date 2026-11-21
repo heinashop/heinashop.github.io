@@ -189,7 +189,7 @@ export function SpotShopPage() {
           {filtered.map((p) => (
             <Card key={p.id} className="flex flex-col">
               <div className="flex gap-3">
-                <img src={p.imageUrl} alt="" className="h-24 w-24 shrink-0 rounded-xl object-cover" />
+                <img loading="lazy" decoding="async" src={p.imageUrl} alt="" className="h-24 w-24 shrink-0 rounded-xl object-cover" />
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 font-semibold text-zinc-900">{p.name}</p>
                   <p className="mt-1 font-mono text-xs text-zinc-500">{p.sku}</p>

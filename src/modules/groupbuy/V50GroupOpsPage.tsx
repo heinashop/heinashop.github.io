@@ -5,13 +5,15 @@ import { Btn, PageHeader } from '../../components/ui'
 import { useDaigouStore } from '../../daigou/store'
 import { GroupSetupModal, type GroupSetupFormValues } from '../../components/groups/GroupSetupModal'
 import { useApi } from '../../context/useApi'
+import { isSheetEditing, mergeGroupList, setSheetEditing } from '../../sync/sheetSync'
+import { useRemoteSlice } from '../../sync/SheetSyncBridge'
+import { applySavedRevisions, buildGroupSavePayload, type SaveResult } from '../../sync/groupSave'
 import type {
   BankJournalRow,
   ConsolidationShipment,
   GroupBuyAppData,
   GroupBuyGroup,
   GroupBuyOrder,
-  GroupBuySavePayload,
 } from '../../api/types'
 import { V50GroupInfoCard } from './V50GroupInfoCard'
 import { syncV50OrderToDaigou, syncV50GroupOrdersToDaigou, findSyncedDaigouOrderId, removeSyncedDaigouOrder, reconcileShippingQueueFromDaigou } from './v50DaigouSync'
@@ -142,6 +144,7 @@ export function V50GroupOpsPage() {
   const api = useApi()
   const [loading, setLoading] = useState(true)
   const [groups, setGroups] = useState<GroupBuyGroup[]>([])
+  const baseGroupsRef = useRef<GroupBuyGroup[]>([])
   const [bankJournal, setBankJournal] = useState<BankJournalRow[]>([])
   const [paymentReports, setPaymentReports] = useState<GroupBuyAppData['paymentReports']>([])
   const [consolidationShipments, setConsolidationShipments] = useState<ConsolidationShipment[]>([])
@@ -175,6 +178,20 @@ export function V50GroupOpsPage() {
   const [viewOrder, setViewOrder] = useState<GroupBuyOrder | null>(null)
 
   const [orderOpen, setOrderOpen] = useState(false)
+  useEffect(() => {
+    setSheetEditing(orderOpen || setupOpen || Boolean(editingGroup))
+    return () => setSheetEditing(false)
+  }, [editingGroup, orderOpen, setupOpen])
+  useRemoteSlice((slice) => {
+    if (isSheetEditing()) return
+    if (slice.groups) {
+      const incoming = slice.groups as GroupBuyGroup[]
+      setGroups((prev) => mergeGroupList(prev, incoming))
+      baseGroupsRef.current = mergeGroupList(baseGroupsRef.current, incoming)
+    }
+    if (slice.bankJournal) setBankJournal(slice.bankJournal as BankJournalRow[])
+    if (slice.paymentReports) setPaymentReports(slice.paymentReports as GroupBuyAppData['paymentReports'])
+  })
   const [orderForm, setOrderForm] = useState<GroupBuyOrder | null>(null)
   const [tempItem, setTempItem] = useState({ name: '', qty: 1, jpy: '', twd: '' })
   const [costSaving, setCostSaving] = useState(false)
@@ -201,18 +218,17 @@ export function V50GroupOpsPage() {
       setExchangeRate(data.exchangeRate ?? 0.22)
       setPortalConfig(data.portalConfig)
       if (synced || nextShips !== ships) {
-        await api.call({
-          module: 'groupbuy',
-          action: 'saveAppData',
-          payload: {
-            groups: nextGroups,
-            bankJournal: data.bankJournal || [],
-            exchangeRate: data.exchangeRate ?? 0.22,
-            portalConfig: data.portalConfig,
-            paymentReports: data.paymentReports || [],
-            consolidationShipments: nextShips,
-          },
+        const { payload, mutationMode } = buildGroupSavePayload(rawGroups, nextGroups, {
+          bankJournal: data.bankJournal || [],
+          exchangeRate: data.exchangeRate ?? 0.22,
+          portalConfig: data.portalConfig,
+          paymentReports: data.paymentReports || [],
+          consolidationShipments: nextShips,
         })
+        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+        baseGroupsRef.current = mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups
+      } else {
+        baseGroupsRef.current = rawGroups
       }
     } catch (e) {
       console.error(e)
@@ -244,15 +260,15 @@ export function V50GroupOpsPage() {
       nextPaymentReports = paymentReports,
     ) => {
       if (savingRef.current) {
-        setStatusMsg('上一筆儲存還沒完成，請稍候再按')
-        return
+        setStatusMsg('上一筆儲存還在進行中，請稍候再按')
+        return false
       }
       savingRef.current = true
       setStatusMsg('儲存中…')
+      let ok = false
       try {
         const nextShips = syncShipmentsFromGroupStatuses(nextGroups, consolidationShipments)
-        const payload: GroupBuySavePayload = {
-          groups: nextGroups,
+        const { payload, mutationMode } = buildGroupSavePayload(baseGroupsRef.current, nextGroups, {
           bankJournal: nextJournal,
           exchangeRate,
           portalConfig: portalConfig || {
@@ -264,20 +280,24 @@ export function V50GroupOpsPage() {
           },
           paymentReports: nextPaymentReports,
           consolidationShipments: nextShips,
-        }
-        await api.call({ module: 'groupbuy', action: 'saveAppData', payload })
-        setGroups(nextGroups)
+        })
+        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+        const committed = mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups
+        baseGroupsRef.current = committed
+        setGroups(committed)
         setBankJournal(nextJournal)
         setPaymentReports(nextPaymentReports)
         setConsolidationShipments(nextShips)
-        setStatusMsg('已儲存')
+        setStatusMsg(mutationMode ? '已儲存（只寫入本次改動）' : '已儲存')
+        ok = true
       } catch (e) {
         console.error(e)
         setStatusMsg(e instanceof Error ? e.message : '儲存失敗')
       } finally {
         savingRef.current = false
       }
-      setTimeout(() => setStatusMsg(''), 3200)
+      if (ok) setTimeout(() => setStatusMsg(''), 3200)
+      return ok
     },
     [api, bankJournal, exchangeRate, paymentReports, portalConfig, consolidationShipments],
   )
@@ -372,8 +392,9 @@ export function V50GroupOpsPage() {
     const next = editingGroup
       ? groups.map((g) => (g.id === editingGroup.id ? { ...ng, orders: g.orders } : g))
       : [ng, ...groups]
+    const ok = await persist(next)
+    if (!ok) return
     setSetupOpen(false)
-    await persist(next)
     const saved = editingGroup ? next.find((g) => g.id === editingGroup.id) : next[0]
     if (saved) syncV50GroupOrdersToDaigou(saved)
   }
@@ -443,7 +464,8 @@ export function V50GroupOpsPage() {
       if (!orders) continue
       for (const o of orders) syncV50OrderToDaigou(g, o)
     }
-    await persist(next)
+    const ok = await persist(next)
+    if (!ok) return
     setStatusMsg(summary)
     setTimeout(() => setStatusMsg(''), 3200)
   }
@@ -497,16 +519,17 @@ export function V50GroupOpsPage() {
         : [saved, ...g.orders]
       return { ...g, orders }
     })
-    setOrderOpen(false)
-    const savedGroup = next.find((g) => g.id === viewGroupId)
-    if (savedGroup) syncV50OrderToDaigou(savedGroup, saved)
-    await persist(
+    const ok = await persist(
       next,
       reportSync.bankJournal,
       reportSync.reports,
     )
+    if (!ok) return
+    setOrderOpen(false)
+    const savedGroup = next.find((g) => g.id === viewGroupId)
+    if (savedGroup) syncV50OrderToDaigou(savedGroup, saved)
     if (reportSync.removedCount > 0) {
-      setStatusMsg(`已儲存，並同步移除 ${reportSync.removedCount} 筆付款回報`)
+      setStatusMsg(`已儲存，同步移除 ${reportSync.removedCount} 筆付款回報`)
       setTimeout(() => setStatusMsg(''), 2800)
     }
   }
@@ -551,10 +574,11 @@ export function V50GroupOpsPage() {
       return saved
     })
     const next = groups.map((g) => (g.id === viewGroup.id ? { ...g, orders: nextOrders } : g))
+    const savedOk = await persist(next, journal, reports)
+    if (!savedOk) return
     const savedGroup = next.find((g) => g.id === viewGroup.id)
     if (savedGroup) syncV50GroupOrdersToDaigou(savedGroup)
-    await persist(next, journal, reports)
-    setStatusMsg(`已把 ${targets.length} 筆改為貨到付款，不再計入待收訂金`)
+    setStatusMsg(`已將 ${targets.length} 筆轉貨到付款，未寫入銀行日記帳`)
     setTimeout(() => setStatusMsg(''), 2800)
   }
 
@@ -596,10 +620,11 @@ export function V50GroupOpsPage() {
         ? { ...g, orders: (g.orders || []).filter((o) => o.id !== order.id) }
         : g,
     )
+    const okSaved = await persist(next, reportSync.bankJournal, reportSync.reports)
+    if (!okSaved) return
     if (viewOrder?.id === order.id) setViewOrder(null)
     if (orderForm?.id === order.id) setOrderOpen(false)
     removeSyncedDaigouOrder(order.id)
-    await persist(next, reportSync.bankJournal, reportSync.reports)
     setStatusMsg(
       reportSync.removedCount > 0
         ? `已刪除客訂，並移除 ${reportSync.removedCount} 筆付款回報`

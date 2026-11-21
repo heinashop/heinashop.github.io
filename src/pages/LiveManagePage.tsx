@@ -442,7 +442,7 @@ export function LiveManagePage() {
                   <div className="live-photos">
                     {active.photoUrls.map((url, i) => (
                       <div key={`${active.id}-p-${i}`} className="live-photo">
-                        <img src={url} alt={`連線照片 ${i + 1}`} />
+                        <img loading="lazy" decoding="async" src={url} alt={`連線照片 ${i + 1}`} />
                         <button
                           type="button"
                           className="live-photo-remove"
@@ -504,7 +504,7 @@ export function LiveManagePage() {
                             >
                               <div className="live-customer-card-thumb">
                                 {thumb ? (
-                                  <img src={thumb} alt="" />
+                                  <img loading="lazy" decoding="async" src={thumb} alt="" />
                                 ) : (
                                   <span>{group.name.slice(0, 1) || '?'}</span>
                                 )}
@@ -601,7 +601,7 @@ export function LiveManagePage() {
                                   <div className="live-photos live-photos--card">
                                     {photos.map((url, i) => (
                                       <div key={`${group.key}-p-${i}`} className="live-photo">
-                                        <img src={url} alt={`${group.name} 照片 ${i + 1}`} />
+                                        <img loading="lazy" decoding="async" src={url} alt={`${group.name} 照片 ${i + 1}`} />
                                         <button
                                           type="button"
                                           className="live-photo-remove"

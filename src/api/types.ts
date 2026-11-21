@@ -140,6 +140,8 @@ export type GroupBuyOrder = {
   paymentStatus: string
   paymentInfo: string
   items: GroupBuyItem[]
+  /** 這筆訂單自己的版本。全域版本仍另外存在，供跨頁同步。 */
+  orderRevision?: string
 }
 
 export type GroupBuyPurchaseCost = {
@@ -186,6 +188,8 @@ export type GroupBuyGroup = {
   id: string
   name: string
   status: string
+  /** 團名、狀態、日期等共同欄位的版本 */
+  groupRevision?: string
   /** 場販或通販（舊資料可能缺省；請在開團專區設定） */
   channel?: GroupBuyChannel | ''
   /**
@@ -269,6 +273,10 @@ export type BankJournalRow = {
   note: string
   /** 匯款後五碼（顯示為 #xxxxx） */
   lastFive?: string
+  /** 由日記帳編號帶出的付款操作，不另寫一筆帳 */
+  operationId?: string
+  /** 顯示用：撤銷審核不等於退款 */
+  reviewState?: string
 }
 
 export type GroupBuyAppData = {
@@ -301,6 +309,10 @@ export type GroupBuySavePayload = {
   consolidationShipments?: ConsolidationShipment[]
   /** 由前端依最近一次讀取帶上；舊版前端不帶時，後端不擋儲存。 */
   dataRevision?: string
+  /** 只送有改動的訂單時使用。沒有這個欄位時，仍走整包儲存與全域版本。 */
+  mutations?: unknown[]
+  orderRevisions?: Record<string, string>
+  groupRevisions?: Record<string, string>
 }
 
 export type SaveBankJournalPayload = {
@@ -470,6 +482,7 @@ export type ConfirmPaymentReportPayload = {
   lineDeposits?: Record<string, number>
   /** 本次要確認沖銷的訂單（未勾選的團務維持未付款） */
   selectedOrderIds?: string[]
+  operationId?: string
 }
 
 export type UpdatePaymentReportLineFlagsPayload = {
@@ -485,6 +498,7 @@ export type SupplementPaymentReportPayload = {
   remittanceDate?: string
   remittanceBank?: string
   note?: string
+  operationId?: string
 }
 
 export type DeletePaymentReportPayload = {
@@ -498,6 +512,7 @@ export type DeletePaymentReportResult = {
 
 export type RevertPaymentReportPayload = {
   reportId: string
+  operationId?: string
 }
 
 export type RevertPaymentReportResult = {
@@ -551,6 +566,7 @@ export type CustomerLookupResult = {
   matches: CustomerLookupMatch[]
   membership?: PortalLookupMembership | null
   lookupError?: string
+  dataRevision?: string
 }
 
 export type CustomerLookupPayload = {

@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { Btn, PageHeader } from '../components/ui'
 import { useApi } from '../context/useApi'
-import type { GroupBuyAppData, GroupBuySavePayload } from '../api/types'
+import { isSheetEditing, mergeGroupList } from '../sync/sheetSync'
+import { useRemoteSlice } from '../sync/SheetSyncBridge'
+import { applySavedRevisions, buildGroupSavePayload, type SaveResult } from '../sync/groupSave'
+import type { GroupBuyAppData } from '../api/types'
 import { V50BillingReconcile } from '../modules/groupbuy/V50BillingReconcile'
 import { syncV50OrderToDaigou } from '../modules/groupbuy/v50DaigouSync'
 import { createAdminReviewPaymentReport } from '../modules/groupbuy/paymentReportLogic'
@@ -13,6 +16,16 @@ export function PaymentReviewPage() {
   const api = useApi()
   const [loading, setLoading] = useState(true)
   const [groups, setGroups] = useState<GroupBuyAppData['groups']>([])
+  const baseGroupsRef = useRef<GroupBuyAppData['groups']>([])
+  useRemoteSlice((slice) => {
+    if (isSheetEditing()) return
+    if (slice.groups) {
+      const incoming = slice.groups as GroupBuyAppData['groups']
+      setGroups((prev) => mergeGroupList(prev, incoming))
+      baseGroupsRef.current = mergeGroupList(baseGroupsRef.current, incoming)
+    }
+    if (slice.paymentReports) setPaymentReports(slice.paymentReports as GroupBuyAppData['paymentReports'])
+  })
   const [bankJournal, setBankJournal] = useState<GroupBuyAppData['bankJournal']>([])
   const [exchangeRate, setExchangeRate] = useState(0.22)
   const [portalConfig, setPortalConfig] = useState<GroupBuyAppData['portalConfig'] | null>(null)
@@ -24,6 +37,7 @@ export function PaymentReviewPage() {
     try {
       const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
       setGroups(data.groups || [])
+      baseGroupsRef.current = data.groups || []
       setBankJournal(data.bankJournal || [])
       setExchangeRate(data.exchangeRate ?? 0.22)
       setPortalConfig(data.portalConfig)
@@ -48,8 +62,7 @@ export function PaymentReviewPage() {
     ) => {
       setStatusMsg('儲存中…')
       try {
-        const payload: GroupBuySavePayload = {
-          groups: nextGroups,
+        const { payload, mutationMode } = buildGroupSavePayload(baseGroupsRef.current, nextGroups, {
           bankJournal: nextJournal,
           exchangeRate,
           portalConfig: portalConfig || {
@@ -60,8 +73,10 @@ export function PaymentReviewPage() {
             extraNote: '',
           },
           paymentReports: nextPaymentReports,
-        }
-        await api.call({ module: 'groupbuy', action: 'saveAppData', payload })
+        })
+        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+        const committed = mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups
+        baseGroupsRef.current = committed
         if (nextJournal !== bankJournal) {
           const added = nextJournal.filter((j) => !bankJournal.some((x) => x.id === j.id))
           if (added.length) {
@@ -75,9 +90,9 @@ export function PaymentReviewPage() {
             setBankJournal(nextJournal)
           }
         }
-        setGroups(nextGroups)
+        setGroups(committed)
         setPaymentReports(nextPaymentReports)
-        setStatusMsg('已儲存')
+        setStatusMsg(mutationMode ? '已儲存（只寫入本次改動）' : '已儲存')
       } catch (e) {
         console.error(e)
         setStatusMsg('儲存失敗')

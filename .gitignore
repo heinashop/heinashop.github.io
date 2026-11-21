@@ -33,6 +33,7 @@ Thumbs.db
 !.vscode/extensions.json
 
 # Test / debug dumps
+prelaunch-backups/
 _enc_report.txt
 _hist_sample.txt
 *.corrupted.bak

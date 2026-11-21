@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Group, Order } from '../../daigou/types'
 import type { SharedCustomerBalanceMemo, SubmitCustomerPaymentReportResult } from '../../api/types'
 import { useApi } from '../../context/useApi'
 import { useDaigouStore } from '../../daigou/store'
+import { setCustomerPaymentFormDirty } from './customerFormGuard'
 import {
   collectOpenMemosForCustomerName,
   formatMemoAmount,
@@ -95,23 +96,43 @@ export function CustomerPaymentReportPanel({
   }, [sharedMemos, localMemos])
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(orders.map((o) => o.id)))
-  const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(() => new Set())
+  const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(() => new Set(openMemos.map((m) => m.id)))
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [lastFive, setLastFive] = useState('')
   const [totalAmount, setTotalAmount] = useState('')
   const [toast, setToast] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [successModalOpen, setSuccessModalOpen] = useState(false)
+  const submitKeyRef = useRef('')
+  const initialDateRef = useRef(paymentDate)
+  const userTouchedRef = useRef(false)
+  const amountTouchedRef = useRef(false)
 
+  const ordersKey = orders.map((o) => o.id).join('|')
   useEffect(() => {
+    if (userTouchedRef.current) return
     setSelectedIds(new Set(orders.map((o) => o.id)))
-  }, [orders])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordersKey])
 
   const openMemoIdsKey = openMemos.map((m) => m.id).join('|')
   useEffect(() => {
+    if (userTouchedRef.current) return
     setSelectedMemoIds(new Set(openMemos.map((m) => m.id)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openMemoIdsKey])
+
+  const formDirty =
+    userTouchedRef.current ||
+    amountTouchedRef.current ||
+    selectedIds.size !== orders.length ||
+    selectedMemoIds.size !== openMemos.length ||
+    lastFive.trim() !== '' ||
+    paymentDate !== initialDateRef.current
+  useEffect(() => {
+    setCustomerPaymentFormDirty(formDirty)
+    return () => setCustomerPaymentFormDirty(false)
+  }, [formDirty])
 
   const memoAdjust = useMemo(
     () => sumSelectedMemoAdjust(openMemos, selectedMemoIds),
@@ -124,6 +145,7 @@ export function CustomerPaymentReportPanel({
   )
 
   useEffect(() => {
+    if (amountTouchedRef.current) return
     setTotalAmount(String(autoTotal))
   }, [autoTotal])
 
@@ -136,6 +158,7 @@ export function CustomerPaymentReportPanel({
     !submitting
 
   function toggleOrder(id: string) {
+    userTouchedRef.current = true
     setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -145,10 +168,12 @@ export function CustomerPaymentReportPanel({
   }
 
   function toggleAll(checked: boolean) {
+    userTouchedRef.current = true
     setSelectedIds(checked ? new Set(orders.map((o) => o.id)) : new Set())
   }
 
   function toggleMemo(id: string) {
+    userTouchedRef.current = true
     setSelectedMemoIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -159,11 +184,21 @@ export function CustomerPaymentReportPanel({
 
   function closeSuccessModal() {
     setSuccessModalOpen(false)
+    submitKeyRef.current = ''
+    userTouchedRef.current = false
+    amountTouchedRef.current = false
+    setLastFive('')
+    setTotalAmount(String(autoTotal))
+    initialDateRef.current = paymentDate
+    setCustomerPaymentFormDirty(false)
     onSubmitted?.()
   }
 
   async function handleSubmit() {
     if (!canSubmit) return
+    if (!submitKeyRef.current) {
+      submitKeyRef.current = `cpr_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+    }
     setSubmitting(true)
     setToast('')
     try {
@@ -183,6 +218,7 @@ export function CustomerPaymentReportPanel({
           totalAmount: totalValue,
           orderIds: [...selectedIds],
           balanceMemos,
+          clientRequestId: submitKeyRef.current,
         },
       })
       if (!res.ok) {
@@ -289,7 +325,10 @@ export function CustomerPaymentReportPanel({
             type="date"
             className="lk-pay-report-input"
             value={paymentDate}
-            onChange={(e) => setPaymentDate(e.target.value)}
+            onChange={(e) => {
+              userTouchedRef.current = true
+              setPaymentDate(e.target.value)
+            }}
           />
         </label>
         <label className="lk-pay-report-field">
@@ -301,7 +340,10 @@ export function CustomerPaymentReportPanel({
             maxLength={5}
             placeholder="例：12345"
             value={lastFive}
-            onChange={(e) => setLastFive(e.target.value.replace(/\D/g, '').slice(0, 5))}
+            onChange={(e) => {
+              userTouchedRef.current = true
+              setLastFive(e.target.value.replace(/\D/g, '').slice(0, 5))
+            }}
             autoComplete="off"
           />
         </label>
@@ -315,7 +357,11 @@ export function CustomerPaymentReportPanel({
             step={1}
             placeholder="0"
             value={totalAmount}
-            onChange={(e) => setTotalAmount(e.target.value)}
+            onChange={(e) => {
+              userTouchedRef.current = true
+              amountTouchedRef.current = true
+              setTotalAmount(e.target.value)
+            }}
           />
         </label>
       </div>

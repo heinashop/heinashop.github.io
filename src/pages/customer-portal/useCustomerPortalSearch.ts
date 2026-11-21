@@ -10,6 +10,7 @@ import type {
   PreorderLookupMatch,
 } from '../../api/types'
 import { normalizeLookupPin, isValidLookupPin } from '../../daigou/portalLookupAuth'
+import { isCustomerPaymentFormDirty } from './customerFormGuard'
 import { normalizePortal } from './mergePortal'
 
 const LOOKUP_PIN_SESSION_KEY = 'heina.lookup.pin'
@@ -62,6 +63,9 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
   const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
   const [membership, setMembership] = useState<PortalLookupMembership | null>(null)
+  const [autoSync, setAutoSync] = useState<'idle' | 'checking' | 'updated' | 'error'>('idle')
+  const revisionRef = useRef(0)
+  const autoSyncBusyRef = useRef(false)
 
   const loadInitialPortal = useCallback(() => {
     void api
@@ -79,19 +83,25 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
   }, [loadInitialPortal])
 
   const performSearch = useCallback(
-    async (q: string, pin: string, opts?: { expandOrderId?: string }) => {
-      setError('')
-      setSearched(true)
-      setLoading(true)
-      setMatchesGroupbuy([])
-      setMatchesPreorder([])
-      setExpandedId(null)
-      setMembership(null)
+    async (q: string, pin: string, opts?: { expandOrderId?: string; silent?: boolean }) => {
+      const silent = !!opts?.silent
+      if (!silent) {
+        setError('')
+        setSearched(true)
+        setLoading(true)
+        setMatchesGroupbuy([])
+        setMatchesPreorder([])
+        setExpandedId(null)
+        setMembership(null)
+        setAutoSync('idle')
+      }
 
       const pinNorm = normalizeLookupPin(pin)
       if (!isValidLookupPin(pinNorm)) {
-        setError('請輸入 4 位數查單密碼')
-        setLoading(false)
+        if (!silent) {
+          setError('請輸入 4 位數查詢密碼')
+          setLoading(false)
+        }
         return
       }
 
@@ -116,11 +126,13 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
 
         if (gbRes.status === 'fulfilled') {
           const gbVal = gbRes.value
+          const revision = Number(gbVal.dataRevision || '0')
+          if (Number.isFinite(revision) && revision > revisionRef.current) revisionRef.current = revision
           if (gbVal.lookupError) lookupErrors.push(gbVal.lookupError)
           else setMatchesGroupbuy(gbVal.matches || [])
           membershipNext = parsePortalMembership(gbVal.membership) ?? membershipNext
         } else {
-          setMatchesGroupbuy([])
+          if (!silent) setMatchesGroupbuy([])
         }
 
         if (poRes.status === 'fulfilled') {
@@ -178,6 +190,48 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
     [api],
   )
 
+  useEffect(() => {
+    if (!searched) return
+    const q = query.trim()
+    if (!q) return
+    let stopped = false
+    const check = async (force = false) => {
+      if (stopped || autoSyncBusyRef.current) return
+      if (!force && document.visibilityState !== 'visible') return
+      if (isCustomerPaymentFormDirty()) return
+      autoSyncBusyRef.current = true
+      try {
+        const res = await api.call<{ dataRevision: string }>({
+          module: 'groupbuy',
+          action: 'publicRevision',
+          payload: {},
+        })
+        const latest = Number(res.dataRevision || '0')
+        if (!stopped && Number.isFinite(latest) && latest > revisionRef.current) {
+          setAutoSync('checking')
+          await performSearch(q, lookupPin, { silent: true })
+        }
+      } catch {
+        if (!stopped) setAutoSync('error')
+      } finally {
+        autoSyncBusyRef.current = false
+      }
+    }
+    const timer = window.setInterval(() => void check(), 20000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const onFocus = () => void check(true)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [api, performSearch, query, lookupPin, searched])
+
   const syncQueryToUrl = useCallback(
     (q: string) => {
       lastSyncedUrlQueryRef.current = q
@@ -210,6 +264,7 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
     setSearched(false)
     setMembership(null)
     setLoading(false)
+    setAutoSync('idle')
     resumeHandledRef.current = false
     syncQueryToUrl('')
     requestAnimationFrame(() => {
@@ -274,5 +329,6 @@ export function useCustomerPortalSearch(api: UnifiedClient) {
     resetToHome,
     loadInitialPortal,
     membership,
+    autoSync,
   }
 }

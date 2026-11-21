@@ -174,6 +174,7 @@ export function CustomerLookupPage() {
             membership={searchState.membership}
             extraNote={portal.extraNote}
             lookupDesc={portal.lookupDesc}
+            autoSync={searchState.autoSync}
           />
         </div>
 
