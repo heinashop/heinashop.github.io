@@ -170,8 +170,13 @@ export function mergeCachedSlice(slice: {
   appDataCache = { revision: lastDataRevision || appDataCache.revision, data }
 }
 
-export function createGasHttpClient(): UnifiedClient {
-  const url = gasWebAppUrl()
+export function createGasHttpClient(options?: {
+  url: string
+  send: <T>(url: string, req: UnifiedRequest) => Promise<T>
+  allowJsonp: boolean
+}): UnifiedClient {
+  const url = options?.url || gasWebAppUrl()
+  const send = options?.send || postCall
   return {
     async call<T>(req: UnifiedRequest): Promise<T> {
       if (!url) throw new Error('尚未設定 VITE_GAS_URL')
@@ -204,9 +209,9 @@ export function createGasHttpClient(): UnifiedClient {
         try {
           let data: T
           try {
-            data = await postCall<T>(url, bodyReq)
+            data = await send<T>(url, bodyReq)
           } catch (err) {
-            if (!canUseJsonp(bodyReq) || !shouldTryJsonp(err)) throw err
+            if (options?.allowJsonp === false || !canUseJsonp(bodyReq) || !shouldTryJsonp(err)) throw err
             data = await jsonpCall<T>(url, bodyReq)
           }
           if (readApp) {
@@ -220,7 +225,7 @@ export function createGasHttpClient(): UnifiedClient {
               Number(incomingRevision) < Number(knownRevision)
             if (stale) {
               if (appDataCache) return appDataCache.data as T
-              const retry = await postCall<T>(url, bodyReq)
+              const retry = await send<T>(url, bodyReq)
               const retryPacked = retry as GroupBuyAppData
               const retryRevision = String(retryPacked.dataRevision ?? '0')
               if (Number(retryRevision) < Number(knownRevision || '0')) {

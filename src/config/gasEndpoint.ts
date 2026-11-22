@@ -1,3 +1,4 @@
+import { backendApiUrl } from './backendEndpoint'
 /** Apps Script Web App URL (`.../exec`). Set at build time with VITE_GAS_URL. */
 export function gasWebAppUrl(): string {
   const raw = String(import.meta.env.VITE_GAS_URL || '').trim()
@@ -5,5 +6,5 @@ export function gasWebAppUrl(): string {
 }
 
 export function hasRemoteGas(): boolean {
-  return /^https:\/\//i.test(gasWebAppUrl())
+  return Boolean(backendApiUrl()) || /^https:\/\//i.test(gasWebAppUrl())
 }

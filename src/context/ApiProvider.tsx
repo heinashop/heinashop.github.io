@@ -1,3 +1,5 @@
+import { backendApiUrl } from '../config/backendEndpoint'
+import { createWorkerHttpClient } from '../adapters/workerHttp'
 import { useMemo, type ReactNode } from 'react'
 import { ApiContext } from './apiContextBase'
 import type { UnifiedClient } from '../api/client'
@@ -8,6 +10,7 @@ import { hasRemoteGas } from '../config/gasEndpoint'
 
 export function ApiProvider({ children }: { children: ReactNode }) {
   const client = useMemo<UnifiedClient>(() => {
+    if (backendApiUrl()) return createWorkerHttpClient()
     if (isGasHost()) return createGasClient()
     if (hasRemoteGas()) return createGasHttpClient()
     return createMockClient()
