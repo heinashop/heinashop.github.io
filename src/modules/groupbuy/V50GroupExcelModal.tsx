@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GroupBuyGroup } from '../../api/types'
 import { normalizeGroupStatus } from './v50Utils'
 import {
+  exportV50GroupInfoXlsx,
   exportV50GroupsFullBackupXlsx,
   exportV50GroupsToXlsx,
   previewV50WorkbookImport,
@@ -37,6 +38,14 @@ type ImportProps = {
 
 type Props = ExportProps | ExportFullProps | ImportProps
 
+function importPlanKey(plan: V50WorkbookImportPreview['plans'][number]) {
+  return `${plan.sheetName}::${plan.groupId}`
+}
+
+function planHasChanges(plan: V50WorkbookImportPreview['plans'][number]) {
+  return !!plan.groupId && (plan.added > 0 || plan.updated > 0 || !!plan.groupPatch)
+}
+
 function activeGroups(groups: GroupBuyGroup[]) {
   return groups.filter((g) => normalizeGroupStatus(g.status) !== '已結束')
 }
@@ -53,6 +62,7 @@ export function V50GroupExcelModal(props: Props) {
   const [message, setMessage] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
   const [preview, setPreview] = useState<V50WorkbookImportPreview | null>(null)
+  const [selectedImportPlans, setSelectedImportPlans] = useState<Set<string>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -88,6 +98,16 @@ export function V50GroupExcelModal(props: Props) {
     setMessage(`已匯出 ${picked.length} 個團務的客訂資料`)
   }
 
+  function handleExportInfo() {
+    const picked = eligible.filter((g) => selected.has(g.id))
+    if (!picked.length) {
+      setMessage('請至少選擇一個團務')
+      return
+    }
+    exportV50GroupInfoXlsx(picked)
+    setMessage(`已匯出 ${picked.length} 個團務的開團資訊`)
+  }
+
   async function handleImportFile(file: File | null) {
     if (!file || props.mode !== 'import') return
     setBusy(true)
@@ -98,6 +118,7 @@ export function V50GroupExcelModal(props: Props) {
       const ab = await file.arrayBuffer()
       const next = previewV50WorkbookImport(ab, eligible)
       setPreview(next)
+      setSelectedImportPlans(new Set(next.plans.filter(planHasChanges).map(importPlanKey)))
       setWarnings(next.warnings)
       setMessage(`可新增 ${next.addable} 筆、失敗 ${next.failed} 筆${next.updatable ? `、可更新 ${next.updatable} 筆` : ''}`)
     } catch (e) {
@@ -111,19 +132,28 @@ export function V50GroupExcelModal(props: Props) {
 
   function confirmImport() {
     if (props.mode !== 'import' || !preview) return
-    const updates = preview.plans
-      .filter((p) => p.groupId && (p.added > 0 || p.updated > 0 || p.groupPatch))
-      .map((p) => ({
-        groupId: p.groupId,
-        orders: p.orders,
-        groupPatch: p.groupPatch,
-      }))
-    if (!updates.length) {
-      setMessage('沒有可匯入的客訂')
+    const selectedPlans = preview.plans.filter(
+      (plan) => planHasChanges(plan) && selectedImportPlans.has(importPlanKey(plan)),
+    )
+    if (!selectedPlans.length) {
+      setMessage('請至少選擇一個可匯入的團務')
       return
     }
-    const infoCount = preview.plans.filter((p) => p.groupPatch).length
-    const summary = `已匯入：新增 ${preview.addable} 筆${preview.updatable ? `、更新 ${preview.updatable} 筆` : ''}${infoCount ? `、開團資訊 ${infoCount} 筆` : ''}${preview.failed ? `、失敗 ${preview.failed} 筆` : ''}`
+    const selectedGroupIds = selectedPlans.map((plan) => plan.groupId)
+    if (new Set(selectedGroupIds).size !== selectedGroupIds.length) {
+      setMessage('多個工作表對應同一團務，請一次只選取該團的一個工作表')
+      return
+    }
+    const updates = selectedPlans.map((plan) => ({
+      groupId: plan.groupId,
+      orders: plan.orders,
+      groupPatch: plan.groupPatch,
+    }))
+    const addable = selectedPlans.reduce((sum, plan) => sum + plan.added, 0)
+    const updatable = selectedPlans.reduce((sum, plan) => sum + plan.updated, 0)
+    const failed = selectedPlans.reduce((sum, plan) => sum + plan.failed, 0)
+    const infoCount = selectedPlans.filter((plan) => plan.groupPatch).length
+    const summary = `已匯入：新增 ${addable} 筆${updatable ? `、更新 ${updatable} 筆` : ''}${infoCount ? `、開團資訊 ${infoCount} 筆` : ''}${failed ? `、失敗 ${failed} 筆` : ''}`
     props.onImport(updates, summary)
     props.onClose()
   }
@@ -139,10 +169,10 @@ export function V50GroupExcelModal(props: Props) {
 
   const subtitle =
     props.mode === 'exportFull'
-      ? '勾選要備份的團務（含已結束）。每團一工作表：團務主檔＋客訂明細；台幣售價為數量×單價。僅供本機備份，請勿用於匯入。'
+      ? '勾選要備份的團務（含已結束）。每團一工作表，包含開團主檔欄位與客訂明細；圖片仍在開團專區管理。也可下載僅含開團資訊、可逐團匯入的精簡檔。'
       : props.mode === 'export'
         ? '選擇要匯出的團務（不含已結束）。同一客戶多品項會分多列；續列名字請留空。付款狀態寫日期與後五碼，例如 11/20 #66666，沒有則空白。'
-        : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同，可一次匯入多團；若有團務主檔列（團務名稱／狀態／日期／信用卡／訂單／物流編號），也會一併更新開團資訊。確認後才會寫入。'
+        : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同；可勾選要匯入的團務，逐團選擇後再確認。若含開團主檔列，團務資訊也會更新並同步到開團專區。'
 
   const emptyText =
     props.mode === 'exportFull'
@@ -197,6 +227,14 @@ export function V50GroupExcelModal(props: Props) {
               </button>
               <button
                 type="button"
+                className="v50-excel-btn v50-excel-btn--ghost"
+                onClick={handleExportInfo}
+                disabled={!selected.size}
+              >
+                匯出開團資訊
+              </button>
+              <button
+                type="button"
                 className="v50-excel-btn v50-excel-btn--primary"
                 onClick={handleExport}
                 disabled={!selected.size}
@@ -216,18 +254,35 @@ export function V50GroupExcelModal(props: Props) {
             />
             {preview ? (
               <ul className="v50-excel-list">
-                {preview.plans.map((p) => (
-                  <li key={`${p.sheetName}-${p.groupId || 'miss'}`}>
-                    <div className="v50-excel-row">
-                      <span className="v50-excel-row-name">{p.groupName}</span>
-                      <span className="v50-excel-row-meta">
-                        {p.groupId
-                          ? `可新增 ${p.added}${p.updated ? ` · 可更新 ${p.updated}` : ''} · 失敗 ${p.failed}`
-                          : `失敗 ${p.failed}`}
-                      </span>
-                    </div>
-                  </li>
-                ))}
+                {preview.plans.map((p) => {
+                  const canImport = planHasChanges(p)
+                  const key = importPlanKey(p)
+                  return (
+                    <li key={key}>
+                      <label className="v50-excel-row">
+                        <input
+                          type="checkbox"
+                          checked={canImport && selectedImportPlans.has(key)}
+                          disabled={!canImport}
+                          onChange={() => {
+                            setSelectedImportPlans((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(key)) next.delete(key)
+                              else next.add(key)
+                              return next
+                            })
+                          }}
+                        />
+                        <span className="v50-excel-row-name">{p.groupName}</span>
+                        <span className="v50-excel-row-meta">
+                          {p.groupId
+                            ? `可新增 ${p.added}${p.updated ? ` · 可更新 ${p.updated}` : ''}${p.groupPatch ? ' · 開團資訊' : ''} · 失敗 ${p.failed}`
+                            : `失敗 ${p.failed}`}
+                        </span>
+                      </label>
+                    </li>
+                  )
+                })}
               </ul>
             ) : (
               <p className="v50-excel-empty">尚未選擇檔案。多團請把每個團放在同名工作表。</p>

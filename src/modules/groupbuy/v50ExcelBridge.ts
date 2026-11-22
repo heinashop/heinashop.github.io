@@ -163,15 +163,29 @@ export function exportV50GroupsToXlsx(groups: GroupBuyGroup[], filename?: string
   XLSX.writeFile(wb, name.replace(/[\\/*?:\[\]]/g, '_'))
 }
 
-const FULL_BACKUP_META_HEADERS = [
+const GROUP_INFO_HEADERS = [
   '團務名稱',
+  '團務狀態',
   '結單日',
+  '結束販賣日',
   '購買日',
   '官方出貨日',
+  '日幣預算總額',
   '信用卡資訊',
-  '訂單編號',
-  '物流編號',
-  '團務狀態',
+  '網站連結',
+  '開團說明',
+  '備註',
+  '開團渠道',
+  '開團專區公開',
+  '團務管理顯示',
+  '缺貨待補',
+  '缺貨待補備註',
+] as const
+
+const FULL_BACKUP_META_HEADERS = [
+  ...GROUP_INFO_HEADERS,
+  '訂單編號（舊版團務欄位）',
+  '物流編號（舊版團務欄位）',
 ] as const
 
 const FULL_BACKUP_DETAIL_HEADERS = [
@@ -196,7 +210,50 @@ function sheetNameFromGroup(group: GroupBuyGroup): string {
   return sheetName
 }
 
-/** 完整團務備份：每團一工作表，含團務主檔與客訂明細（僅備份用，不提供匯入） */
+function groupInfoValues(group: GroupBuyGroup, includeLegacyIds = false): (string | number)[] {
+  const values: (string | number)[] = [
+    group.name,
+    normalizeGroupStatus(group.status),
+    group.closingDate || '',
+    group.saleEndDate || '',
+    group.purchaseDate || '',
+    group.officialShipDate || '',
+    group.jpyAmount ?? '',
+    group.creditCard || '',
+    group.purchaseLink || '',
+    group.description || '',
+    group.remarks || '',
+    group.channel || '',
+    group.portalListed === false ? '否' : group.portalListed === true ? '是' : '',
+    group.opsActive === false ? '否' : group.opsActive === true ? '是' : '',
+    group.stockAlert === false ? '否' : group.stockAlert === true ? '是' : '',
+    group.stockAlertNote || '',
+  ]
+  if (includeLegacyIds) values.push(group.orderId || '', group.logisticsId || '')
+  return values
+}
+
+export function exportV50GroupInfoXlsx(groups: GroupBuyGroup[], filename?: string) {
+  const wb = XLSX.utils.book_new()
+  const usedSheetNames = new Set<string>()
+  for (const group of groups) {
+    let sheetName = sheetNameFromGroup(group)
+    if (usedSheetNames.has(sheetName)) {
+      let n = 2
+      while (usedSheetNames.has(`${sheetName.slice(0, 28)}_${n}`)) n += 1
+      sheetName = `${sheetName.slice(0, 28)}_${n}`
+    }
+    usedSheetNames.add(sheetName)
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([[...GROUP_INFO_HEADERS], groupInfoValues(group)]),
+      sheetName,
+    )
+  }
+  const name = filename ?? `開團資訊-${new Date().toISOString().slice(0, 10)}.xlsx`
+  XLSX.writeFile(wb, name.replace(/[\\/*?:\[\]]/g, '_'))
+}
+
 export function exportV50GroupsFullBackupXlsx(groups: GroupBuyGroup[], filename?: string) {
   const wb = XLSX.utils.book_new()
   const ts = new Date().toISOString().slice(0, 10)
@@ -213,16 +270,7 @@ export function exportV50GroupsFullBackupXlsx(groups: GroupBuyGroup[], filename?
 
     const rows: (string | number)[][] = []
     rows.push([...FULL_BACKUP_META_HEADERS])
-    rows.push([
-      group.name,
-      group.closingDate || '',
-      group.purchaseDate || '',
-      group.officialShipDate || '',
-      group.creditCard || '',
-      group.orderId || '',
-      group.logisticsId || '',
-      normalizeGroupStatus(group.status),
-    ])
+    rows.push(groupInfoValues(group, true))
     rows.push([])
     rows.push([...FULL_BACKUP_DETAIL_HEADERS])
 
@@ -572,6 +620,14 @@ export type V50GroupImportPlan = {
   groupPatch?: Partial<GroupBuyGroup>
 }
 
+function parseGroupInfoBoolean(value: string): boolean | undefined {
+  const normalized = norm(value)
+  if (!normalized) return undefined
+  if (['是', 'true', '1', 'yes'].includes(normalized)) return true
+  if (['否', 'false', '0', 'no'].includes(normalized)) return false
+  return undefined
+}
+
 function parseGroupInfoRow(ws: XLSX.WorkSheet): Partial<GroupBuyGroup> | null {
   const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
   const headerIndex = aoa.findIndex((line) => {
@@ -581,39 +637,50 @@ function parseGroupInfoRow(ws: XLSX.WorkSheet): Partial<GroupBuyGroup> | null {
   if (headerIndex < 0) return null
   const headers = (aoa[headerIndex] || []).map((c) => String(c ?? '').trim())
   const values = aoa[headerIndex + 1] || []
-  const valueOf = (...aliases: string[]) => {
+  const cellOf = (...aliases: string[]) => {
     for (const alias of aliases) {
       const idx = headers.findIndex((h) => norm(h) === norm(alias))
-      if (idx >= 0) {
-        const value = values[idx]
-        if (value !== '' && value != null) return String(value).trim()
-      }
+      if (idx >= 0) return { found: true, value: String(values[idx] ?? '').trim() }
     }
-    return ''
+    return { found: false, value: '' }
   }
-  const name = valueOf('團務名稱')
-  const statusText = valueOf('團務狀態', '狀態')
+  const name = cellOf('團務名稱').value
+  const statusText = cellOf('團務狀態', '狀態').value
   const patch: Partial<GroupBuyGroup> = {}
   if (name) patch.name = name
   if (statusText) patch.status = normalizeGroupStatus(statusText)
-  const closingDate = valueOf('結單日', '結單日期')
-  const saleEndDate = valueOf('結束販賣日')
-  const purchaseDate = valueOf('購買日', '購買日期')
-  const officialShipDate = valueOf('官方出貨日')
-  const creditCard = valueOf('信用卡資訊')
-  const orderId = valueOf('訂單編號')
-  const logisticsId = valueOf('物流編號')
-  const purchaseLink = valueOf('網站連結')
-  const remarks = valueOf('備註')
-  if (closingDate) patch.closingDate = closingDate
-  if (saleEndDate) patch.saleEndDate = saleEndDate
-  if (purchaseDate) patch.purchaseDate = purchaseDate
-  if (officialShipDate) patch.officialShipDate = officialShipDate
-  if (creditCard) patch.creditCard = creditCard
-  if (orderId) patch.orderId = orderId
-  if (logisticsId) patch.logisticsId = logisticsId
-  if (purchaseLink) patch.purchaseLink = purchaseLink
-  if (remarks) patch.remarks = remarks
+  const textFields: Array<[string[], keyof GroupBuyGroup]> = [
+    [['結單日', '結單日期'], 'closingDate'],
+    [['結束販賣日'], 'saleEndDate'],
+    [['購買日', '購買日期'], 'purchaseDate'],
+    [['官方出貨日'], 'officialShipDate'],
+    [['信用卡資訊'], 'creditCard'],
+    [['網站連結'], 'purchaseLink'],
+    [['團務說明', '開團說明'], 'description'],
+    [['備註'], 'remarks'],
+    [['訂單編號（舊版團務欄位）', '訂單編號'], 'orderId'],
+    [['物流編號（舊版團務欄位）', '物流編號'], 'logisticsId'],
+    [['缺貨待補備註'], 'stockAlertNote'],
+  ]
+  for (const [aliases, key] of textFields) {
+    const cell = cellOf(...aliases)
+    if (cell.found) (patch as Record<string, unknown>)[key] = cell.value
+  }
+  const budget = cellOf('日幣預算總額')
+  if (budget.found) patch.jpyAmount = budget.value
+  const channel = cellOf('開團渠道')
+  if (channel.found && (channel.value === '通販' || channel.value === '場販' || channel.value === '')) {
+    patch.channel = channel.value as GroupBuyGroup['channel']
+  }
+  const publicListed = cellOf('開團專區公開')
+  const publicListedValue = parseGroupInfoBoolean(publicListed.value)
+  if (publicListed.found && publicListedValue !== undefined) patch.portalListed = publicListedValue
+  const opsActive = cellOf('團務管理顯示')
+  const opsActiveValue = parseGroupInfoBoolean(opsActive.value)
+  if (opsActive.found && opsActiveValue !== undefined) patch.opsActive = opsActiveValue
+  const stockAlert = cellOf('缺貨待補')
+  const stockAlertValue = parseGroupInfoBoolean(stockAlert.value)
+  if (stockAlert.found && stockAlertValue !== undefined) patch.stockAlert = stockAlertValue
   return Object.keys(patch).length ? patch : null
 }
 
