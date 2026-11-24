@@ -105,6 +105,7 @@ export function shipmentGroupsAllEnded(
   const byId = new Map(groups.map((g) => [g.id, g]))
   const ids = [...new Set((ship.parcels || []).map((p) => p.groupId).filter(Boolean))]
   if (!ids.length) return false
+  if (ids.some((id) => !byId.has(id))) return false
   return ids.every((id) => normalizeGroupStatus(byId.get(id)?.status) === '已結束')
 }
 
@@ -120,6 +121,9 @@ export function syncShipmentsFromGroupStatuses(
       return { ...s, status: 'ended' as const, updatedAt: Date.now() }
     }
     if (!allEnded && s.status === 'ended') {
+      const ids = [...new Set((s.parcels || []).map((p) => p.groupId).filter(Boolean))]
+      const byId = new Map(groups.map((g) => [g.id, g]))
+      if (!ids.length || ids.some((id) => !byId.has(id))) return s
       changed = true
       return {
         ...s,

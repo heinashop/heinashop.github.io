@@ -248,7 +248,7 @@ export function OrderDetailPage() {
     let cancelled = false
     setGbLoading(true)
     void api
-      .call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      .call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       .then((data) => {
         if (cancelled) return
         const list = data.groups || []

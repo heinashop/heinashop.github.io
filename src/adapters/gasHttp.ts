@@ -125,14 +125,34 @@ const APP_DATA_MUTATIONS = new Set([
 type AppDataCache = { revision: string; data: GroupBuyAppData }
 
 let appDataCache: AppDataCache | null = null
+let endedDataCache: AppDataCache | null = null
+let allDataCache: AppDataCache | null = null
 let lastDataRevision: string | null = null
-let appDataFlight: Promise<GroupBuyAppData> | null = null
+const appDataFlights = new Map<string, Promise<GroupBuyAppData>>()
 let publicGroupsCache: { at: number; data: unknown } | null = null
 let mutationFlight = false
 
 function payloadRecord(payload: unknown): Record<string, unknown> | null {
   if (!payload || typeof payload !== 'object') return null
   return payload as Record<string, unknown>
+}
+
+function groupScopeOf(payload: unknown): 'active' | 'ended' | 'all' {
+  const scope = String(payloadRecord(payload)?.groupScope || '')
+  if (scope === 'ended' || scope === 'all') return scope
+  return 'active'
+}
+
+function cacheFor(scope: 'active' | 'ended' | 'all'): AppDataCache | null {
+  if (scope === 'ended') return endedDataCache
+  if (scope === 'all') return allDataCache
+  return appDataCache
+}
+
+function storeCache(scope: 'active' | 'ended' | 'all', cache: AppDataCache) {
+  if (scope === 'ended') endedDataCache = cache
+  else if (scope === 'all') allDataCache = cache
+  else appDataCache = cache
 }
 
 export function mergeCachedSlice(slice: {
@@ -181,12 +201,21 @@ export function createGasHttpClient(options?: {
     async call<T>(req: UnifiedRequest): Promise<T> {
       if (!url) throw new Error('尚未設定 VITE_GAS_URL')
       const readApp = req.module === 'groupbuy' && req.action === 'getAppData'
-      const fresh = Boolean(payloadRecord(req.payload)?.fresh)
+      let bodyReq = attachAdminToken(req)
+      if (readApp) {
+        const pl = payloadRecord(bodyReq.payload) || {}
+        if (pl.groupScope !== 'active' && pl.groupScope !== 'ended' && pl.groupScope !== 'all') {
+          bodyReq = { ...bodyReq, payload: { ...pl, groupScope: 'active' } }
+        }
+      }
+      const scope = groupScopeOf(bodyReq.payload)
+      const fresh = Boolean(payloadRecord(bodyReq.payload)?.fresh)
       const publicList = req.module === 'groupbuy' && req.action === 'listPublicGroups'
       const mutate = req.module === 'groupbuy' && APP_DATA_MUTATIONS.has(req.action)
+      const cached = cacheFor(scope)
 
-      if (readApp && !fresh && appDataCache) return appDataCache.data as T
-      if (readApp && !fresh && appDataFlight) return appDataFlight as Promise<T>
+      if (readApp && !fresh && cached) return cached.data as T
+      if (readApp && !fresh && appDataFlights.has(scope)) return appDataFlights.get(scope) as Promise<T>
       if (publicList && publicGroupsCache && Date.now() - publicGroupsCache.at < 60_000) {
         return publicGroupsCache.data as T
       }
@@ -194,7 +223,6 @@ export function createGasHttpClient(options?: {
         throw new Error('上一筆儲存還沒完成，請稍候再按')
       }
 
-      let bodyReq = attachAdminToken(req)
       if (mutate) {
         const revision = lastDataRevision || appDataCache?.revision || ''
         if (!revision) throw new Error('缺少資料版本，請重新載入後再儲存')
@@ -224,7 +252,8 @@ export function createGasHttpClient(options?: {
               Number.isFinite(Number(knownRevision)) &&
               Number(incomingRevision) < Number(knownRevision)
             if (stale) {
-              if (appDataCache) return appDataCache.data as T
+              const known = cacheFor(scope)
+              if (known) return known.data as T
               const retry = await send<T>(url, bodyReq)
               const retryPacked = retry as GroupBuyAppData
               const retryRevision = String(retryPacked.dataRevision ?? '0')
@@ -233,12 +262,12 @@ export function createGasHttpClient(options?: {
               }
               lastDataRevision = retryRevision
               noteAppliedRevision(lastDataRevision)
-              appDataCache = { revision: lastDataRevision, data: retryPacked }
+              storeCache(scope, { revision: lastDataRevision, data: retryPacked })
               return retry
             }
             lastDataRevision = incomingRevision
             noteAppliedRevision(lastDataRevision)
-            appDataCache = { revision: lastDataRevision, data: packed }
+            storeCache(scope, { revision: lastDataRevision, data: packed })
           }
           if (publicList) publicGroupsCache = { at: Date.now(), data }
           if (mutate) {
@@ -248,17 +277,19 @@ export function createGasHttpClient(options?: {
               noteAppliedRevision(lastDataRevision)
             }
             appDataCache = null
-            appDataFlight = null
+            endedDataCache = null
+            allDataCache = null
+            appDataFlights.clear()
             publicGroupsCache = null
           }
           return data
         } finally {
           if (mutate) mutationFlight = false
-          if (readApp) appDataFlight = null
+          if (readApp) appDataFlights.delete(scope)
         }
       })()
 
-      if (readApp && !fresh) appDataFlight = run as Promise<GroupBuyAppData>
+      if (readApp && !fresh) appDataFlights.set(scope, run as Promise<GroupBuyAppData>)
       return run
     },
   }

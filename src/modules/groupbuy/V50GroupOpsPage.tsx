@@ -166,6 +166,10 @@ export function V50GroupOpsPage() {
   const [exchangeRate, setExchangeRate] = useState(0.22)
   const [statusMsg, setStatusMsg] = useState('')
   const [search, setSearch] = useState('')
+  const [endedGroupCount, setEndedGroupCount] = useState(0)
+  const [endedGroups, setEndedGroups] = useState<GroupBuyGroup[] | null>(null)
+  const endedGroupsRef = useRef<GroupBuyGroup[] | null>(null)
+  endedGroupsRef.current = endedGroups
   const [groupStatusTab, setGroupStatusTab] = useState<V50GroupStatus>('已登記')
   const [groupSort, setGroupSort] = useState<GroupSortKey>('newest')
   const [viewGroupId, setViewGroupIdState] = useState<string | null>(null)
@@ -224,13 +228,21 @@ export function V50GroupOpsPage() {
       const nextShips = syncShipmentsFromGroupStatuses(rawGroups, ships)
       const synced = groupStatusesNeedSync(rawGroups, nextShips)
       const nextGroups = synced ?? rawGroups
-      setGroups(nextGroups)
+      const keepEnded = (list: GroupBuyGroup[]) => {
+        const ended = endedGroupsRef.current || []
+        if (!ended.length) return list
+        const ids = new Set(list.map((g) => g.id))
+        return [...list, ...ended.filter((g) => !ids.has(g.id))]
+      }
+      const shown = keepEnded(nextGroups)
+      setGroups(shown)
       setConsolidationShipments(nextShips)
-      for (const g of nextGroups) syncV50GroupOrdersToDaigou(g)
+      for (const g of shown) syncV50GroupOrdersToDaigou(g)
       setBankJournal(data.bankJournal || [])
       setPaymentReports(data.paymentReports || [])
       setExchangeRate(data.exchangeRate ?? 0.22)
       setPortalConfig(data.portalConfig)
+      setEndedGroupCount(Number(data.endedGroupCount) || 0)
       if (synced || nextShips !== ships) {
         const { payload, mutationMode } = buildGroupSavePayload(rawGroups, nextGroups, {
           bankJournal: data.bankJournal || [],
@@ -240,9 +252,9 @@ export function V50GroupOpsPage() {
           consolidationShipments: nextShips,
         })
         const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
-        baseGroupsRef.current = mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups
+        baseGroupsRef.current = keepEnded(mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups)
       } else {
-        baseGroupsRef.current = rawGroups
+        baseGroupsRef.current = keepEnded(rawGroups)
       }
     } catch (e) {
       console.error(e)
@@ -255,6 +267,36 @@ export function V50GroupOpsPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (groupStatusTab !== '已結束' || endedGroups) return
+    let cancel = false
+    void (async () => {
+      try {
+        const data = await api.call<GroupBuyAppData>({
+          module: 'groupbuy',
+          action: 'getAppData',
+          payload: { groupScope: 'ended', fresh: true },
+        })
+        if (cancel) return
+        const incoming = data.groups || []
+        setEndedGroups(incoming)
+        setEndedGroupCount(incoming.length)
+        setGroups((prev) => {
+          const ids = new Set(prev.map((g) => g.id))
+          return [...prev, ...incoming.filter((g) => !ids.has(g.id))]
+        })
+        const ids = new Set(baseGroupsRef.current.map((g) => g.id))
+        baseGroupsRef.current = [...baseGroupsRef.current, ...incoming.filter((g) => !ids.has(g.id))]
+      } catch (e) {
+        console.error(e)
+        if (!cancel) setStatusMsg('讀取已結束團務失敗')
+      }
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [api, endedGroups, groupStatusTab])
 
   useEffect(() => {
     const fromUrl = searchParams.get('group')
@@ -327,8 +369,9 @@ export function V50GroupOpsPage() {
     for (const g of opsGroups) {
       counts[normalizeGroupStatus(g.status)] += 1
     }
+    counts.已結束 = endedGroups ? endedGroups.filter(isInGroupOps).length : endedGroupCount
     return counts
-  }, [opsGroups])
+  }, [endedGroupCount, endedGroups, opsGroups])
 
   const filteredGroups = useMemo(() => {
     const list = opsGroups.filter((g) => {

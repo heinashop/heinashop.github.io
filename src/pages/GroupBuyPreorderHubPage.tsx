@@ -86,6 +86,7 @@ export function GroupBuyPreorderHubPage() {
   const api = useApi()
   const [loading, setLoading] = useState(true)
   const [groups, setGroups] = useState<GroupBuyGroup[]>([])
+  const [endedGroupCount, setEndedGroupCount] = useState(0)
   const baseGroupsRef = useRef<GroupBuyGroup[]>([])
   useRemoteSlice((slice) => {
     if (isSheetEditing()) return
@@ -158,14 +159,19 @@ export function GroupBuyPreorderHubPage() {
     setLoading(true)
     try {
       const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
-      setGroups(data.groups || [])
-      baseGroupsRef.current = data.groups || []
-      for (const g of data.groups || []) syncV50GroupOrdersToDaigou(g)
+      const incoming = data.groups || []
+      const keptEnded = baseGroupsRef.current.filter((g) => normalizeGroupStatus(g.status) === '已結束')
+      const ids = new Set(incoming.map((g) => g.id))
+      const merged = [...incoming, ...keptEnded.filter((g) => !ids.has(g.id))]
+      setGroups(merged)
+      baseGroupsRef.current = merged
+      for (const g of merged) syncV50GroupOrdersToDaigou(g)
       reconcileShippingQueueFromDaigou()
       setBankJournal(data.bankJournal || [])
       setPaymentReports(data.paymentReports || [])
       setExchangeRate(data.exchangeRate ?? 0.22)
       setPortalConfig(data.portalConfig)
+      setEndedGroupCount(Number(data.endedGroupCount) || 0)
     } catch (e) {
       console.error(e)
       setStatusMsg('讀取失敗')
@@ -368,6 +374,31 @@ export function GroupBuyPreorderHubPage() {
     setBatchSelected(new Set())
   }
 
+  async function openExcel(mode: 'export' | 'exportFull' | 'exportInfo' | 'import') {
+    if ((mode === 'exportFull' || mode === 'exportInfo') && !groups.some((g) => normalizeGroupStatus(g.status) === '已結束')) {
+      try {
+        const data = await api.call<GroupBuyAppData>({
+          module: 'groupbuy',
+          action: 'getAppData',
+          payload: { groupScope: 'ended', fresh: true },
+        })
+        const incoming = data.groups || []
+        if (incoming.length) {
+          setGroups((prev) => {
+            const ids = new Set(prev.map((g) => g.id))
+            return [...prev, ...incoming.filter((g) => !ids.has(g.id))]
+          })
+          const ids = new Set(baseGroupsRef.current.map((g) => g.id))
+          baseGroupsRef.current = [...baseGroupsRef.current, ...incoming.filter((g) => !ids.has(g.id))]
+        }
+      } catch (e) {
+        console.error(e)
+        setStatusMsg('讀取已結束團務失敗')
+      }
+    }
+    setExcelModal(mode)
+  }
+
   function toggleBatch(id: string) {
     setBatchSelected((prev) => {
       const next = new Set(prev)
@@ -456,7 +487,7 @@ export function GroupBuyPreorderHubPage() {
             進行中團數
           </div>
           <div className="gb-hub-kpi-value">{stats.activeGroups}</div>
-          <p className="gb-hub-kpi-foot">已結束 {stats.statusCounts.已結束} 團不計入下方數字</p>
+          <p className="gb-hub-kpi-foot">已結束 {endedGroupCount || stats.statusCounts.已結束} 團不計入下方數字</p>
         </div>
         <div className="gb-hub-kpi gb-hub-kpi--slate">
           <div className="gb-hub-kpi-head">
@@ -501,7 +532,9 @@ export function GroupBuyPreorderHubPage() {
                 'gb-hub-status-item' + (s === '已結束' ? ' gb-hub-status-item--ended' : '')
               }
             >
-              <span className="gb-hub-status-count">{stats.statusCounts[s]}</span>
+              <span className="gb-hub-status-count">
+                {s === '已結束' ? endedGroupCount || stats.statusCounts[s] : stats.statusCounts[s]}
+              </span>
               <span className="gb-hub-status-name">{HUB_STATUS_LABELS[s]}</span>
             </div>
           ))}
@@ -816,7 +849,7 @@ export function GroupBuyPreorderHubPage() {
               <div>
                 <div className="gb-hub-excel-group-title">團務客訂</div>
                 <div className="gb-hub-action-list">
-                  <button type="button" className="gb-hub-action" onClick={() => setExcelModal('exportFull')}>
+                  <button type="button" className="gb-hub-action" onClick={() => void openExcel('exportFull')}>
                     <span className="gb-hub-action-icon"><Archive className="h-4 w-4" aria-hidden /></span>
                     <span className="gb-hub-action-text">
                       <span className="gb-hub-action-name">完整團務備份</span>
@@ -846,7 +879,7 @@ export function GroupBuyPreorderHubPage() {
                       <span className="gb-hub-action-desc">與匯出欄位一致</span>
                     </span>
                   </button>
-                  <button type="button" className="gb-hub-action" onClick={() => setExcelModal('exportInfo')}>
+                  <button type="button" className="gb-hub-action" onClick={() => void openExcel('exportInfo')}>
                     <span className="gb-hub-action-icon"><FileDown className="h-4 w-4" aria-hidden /></span>
                     <span className="gb-hub-action-text">
                       <span className="gb-hub-action-name">匯出團務資訊</span>

@@ -84,7 +84,7 @@ export function AdminNicknameSearchPage() {
   const refreshFromGroupbuy = useCallback(async () => {
     setSyncing(true)
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       for (const g of data.groups || []) syncV50GroupOrdersToDaigou(g)
     } catch (e) {
       console.error(e)
