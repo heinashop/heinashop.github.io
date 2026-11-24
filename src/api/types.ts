@@ -297,6 +297,8 @@ export type GroupBuyAppData = {
   bankViewer?: BankViewerPublicMeta
   /** 整包資料版本。儲存時帶回，避免蓋過另一個畫面剛寫入的內容。 */
   dataRevision?: string
+  /** 未隨這次回傳的已結束團數。進行中讀取不會帶出那些團的客訂。 */
+  endedGroupCount?: number
 }
 
 export type GroupBuySavePayload = {
@@ -311,6 +313,8 @@ export type GroupBuySavePayload = {
   consolidationShipments?: ConsolidationShipment[]
   /** 由前端依最近一次讀取帶上；舊版前端不帶時，後端不擋儲存。 */
   dataRevision?: string
+  /** 整份儲存時，這次從清單移除的團。已結束列只在列入這裡時才從試算表拿掉。 */
+  removedGroupIds?: string[]
   /** 只送有改動的訂單時使用。沒有這個欄位時，仍走整包儲存與全域版本。 */
   mutations?: unknown[]
   orderRevisions?: Record<string, string>

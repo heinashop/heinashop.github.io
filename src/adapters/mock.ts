@@ -167,7 +167,12 @@ export function createMockClient(): UnifiedClient {
 
       if (module === 'groupbuy') {
         if (action === 'getAppData') {
-          return toPublicGroupBuyData(loadGroupBuyStored()) as T
+          const data = toPublicGroupBuyData(loadGroupBuyStored())
+          const scope = String((payload as { groupScope?: string } | undefined)?.groupScope || 'all')
+          if (scope === 'all') return data as T
+          const ended = data.groups.filter((g) => g.status === '已結束')
+          const groups = scope === 'ended' ? ended : data.groups.filter((g) => g.status !== '已結束')
+          return { ...data, groups, endedGroupCount: ended.length } as T
         }
         if (action === 'publicBootstrap') {
           const data = loadGroupBuyStored()

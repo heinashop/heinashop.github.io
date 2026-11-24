@@ -1,4 +1,5 @@
 import type { GroupBuyGroup, GroupBuyOrder, GroupBuySavePayload } from '../api/types'
+import { normalizeGroupStatus } from '../modules/groupbuy/v50Utils'
 
 export const SHARED_GROUP_FIELDS = [
   'officialShipDate',
@@ -124,14 +125,20 @@ export function diffGroups(baseGroups: GroupBuyGroup[], nextGroups: GroupBuyGrou
 function rebuild(
   payload: Record<string, unknown>,
   diff: GroupDiff | null,
+  baseGroups: GroupBuyGroup[],
   nextGroups: GroupBuyGroup[],
 ): GroupBuySavePayload {
-  const base = { ...payload }
+  const removedGroupIds = baseGroups
+    .filter((group) => !nextGroups.some((item) => item.id === group.id))
+    .map((group) => group.id)
+  const base: Record<string, unknown> = { ...payload, removedGroupIds }
   delete base.groups
   delete base.mutations
   delete base.orderRevisions
   delete base.groupRevisions
-  if (!diff) return { ...base, groups: nextGroups } as GroupBuySavePayload
+  if (!diff) {
+    return { ...base, groups: groupsForFullSave(baseGroups, nextGroups) } as GroupBuySavePayload
+  }
   return {
     ...base,
     mutations: diff.mutations,
@@ -140,13 +147,25 @@ function rebuild(
   } as GroupBuySavePayload
 }
 
+function groupsForFullSave(baseGroups: GroupBuyGroup[], nextGroups: GroupBuyGroup[]): GroupBuyGroup[] {
+  const endedBase = new Map(
+    baseGroups
+      .filter((group) => normalizeGroupStatus(group.status) === '已結束')
+      .map((group) => [group.id, JSON.stringify(group)]),
+  )
+  return nextGroups.filter((group) => {
+    if (normalizeGroupStatus(group.status) !== '已結束') return true
+    return endedBase.get(group.id) !== JSON.stringify(group)
+  })
+}
+
 export function buildGroupSavePayload(
   baseGroups: GroupBuyGroup[],
   nextGroups: GroupBuyGroup[],
   payload: Record<string, unknown>,
 ): { payload: GroupBuySavePayload; mutationMode: boolean } {
   const diff = diffGroups(baseGroups, nextGroups)
-  return { payload: rebuild(payload, diff, nextGroups), mutationMode: !!diff }
+  return { payload: rebuild(payload, diff, baseGroups, nextGroups), mutationMode: !!diff }
 }
 
 export function applySavedRevisions(groups: GroupBuyGroup[], result: SaveResult | null | undefined): GroupBuyGroup[] {

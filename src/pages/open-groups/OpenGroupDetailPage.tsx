@@ -121,7 +121,7 @@ export function OpenGroupDetailPage({ embedded = false }: Props) {
     setSaving(true)
     setSaveMsg('')
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       const imageUrls = form.imageUrls
       const coverImageUrl = primaryGroupImageUrl(imageUrls)
       const channel: GroupBuyChannel | '' =
@@ -190,7 +190,7 @@ export function OpenGroupDetailPage({ embedded = false }: Props) {
     setSaving(true)
     setSaveMsg('')
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       const groups = (data.groups || []).map((g) => {
         if (g.id !== group.id) return g
         return { ...g, opsActive: true, portalListed: true, channel: '通販' as const }

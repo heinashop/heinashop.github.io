@@ -96,7 +96,7 @@ export function OpenGroupsPage({ embedded = false, variant = 'public' }: Props) 
     setPinSaving(true)
     setPinMsg('')
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       const payload: GroupBuySavePayload = {
         groups: data.groups || [],
         bankJournal: data.bankJournal || [],
@@ -180,7 +180,7 @@ export function OpenGroupsPage({ embedded = false, variant = 'public' }: Props) 
           : '通販'
     setCreating(true)
     try {
-      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData' })
+      const data = await api.call<GroupBuyAppData>({ module: 'groupbuy', action: 'getAppData', payload: { groupScope: 'all' } })
       const today = localTodayIso()
       const id = `g_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`
       const ng: GroupBuyGroup = {
