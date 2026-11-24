@@ -799,7 +799,7 @@ export function GroupBuyPreorderHubPage() {
           </div>
         </article>
 
-        <article className="gb-hub-card">
+        <article className="gb-hub-card gb-hub-work-excel">
           <div className="gb-hub-card-head">
             <h2 className="gb-hub-card-title">Excel 工具</h2>
             <p className="gb-hub-card-desc">團務客訂與團務管理共用同一後端資料</p>
