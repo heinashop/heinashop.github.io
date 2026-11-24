@@ -31,7 +31,7 @@ import type {
 } from '../api/types'
 import { V50GroupExcelModal } from '../modules/groupbuy/V50GroupExcelModal'
 import { syncV50GroupOrdersToDaigou, syncV50OrderToDaigou, reconcileShippingQueueFromDaigou } from '../modules/groupbuy/v50DaigouSync'
-import { downloadV50OrderTemplateXlsx } from '../modules/groupbuy/v50ExcelBridge'
+import { downloadV50OrderTemplateXlsx, materializeImportedGroup } from '../modules/groupbuy/v50ExcelBridge'
 import {
   computeGroupBuyHubStats,
   listImminentClosingGroups,
@@ -383,15 +383,22 @@ export function GroupBuyPreorderHubPage() {
   }
 
   async function applyExcelImport(
-    updates: { groupId: string; orders: GroupBuyOrder[] }[],
+    updates: { groupId: string; orders: GroupBuyOrder[]; groupPatch?: Partial<GroupBuyGroup>; createGroup?: boolean }[],
     summary: string,
   ) {
-    const byId = new Map(updates.map((u) => [u.groupId, u.orders]))
-    const next = groups.map((g) => (byId.has(g.id) ? { ...g, orders: byId.get(g.id)! } : g))
+    const byId = new Map(updates.map((u) => [u.groupId, u]))
+    const next = groups.map((g) => {
+      const update = byId.get(g.id)
+      return update ? { ...g, ...(update.groupPatch || {}), orders: update.orders } : g
+    })
+    for (const update of updates) {
+      if (next.some((g) => g.id === update.groupId)) continue
+      next.push(materializeImportedGroup(update))
+    }
     for (const g of next) {
-      const orders = byId.get(g.id)
-      if (!orders) continue
-      for (const o of orders) syncV50OrderToDaigou(g, o)
+      const update = byId.get(g.id)
+      if (!update) continue
+      for (const o of update.orders) syncV50OrderToDaigou(g, o)
     }
     await persist(next)
     setStatusMsg(summary)

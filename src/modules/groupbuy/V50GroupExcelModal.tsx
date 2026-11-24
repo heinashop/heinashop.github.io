@@ -43,7 +43,7 @@ function importPlanKey(plan: V50WorkbookImportPreview['plans'][number]) {
 }
 
 function planHasChanges(plan: V50WorkbookImportPreview['plans'][number]) {
-  return !!plan.groupId && (plan.added > 0 || plan.updated > 0 || !!plan.groupPatch)
+  return !!plan.groupId && (plan.added > 0 || plan.updated > 0 || !!plan.groupPatch || !!plan.createGroup)
 }
 
 function activeGroups(groups: GroupBuyGroup[]) {
@@ -177,7 +177,7 @@ export function V50GroupExcelModal(props: Props) {
         ? '勾選要匯出的團務（含已結束）。每團一個工作表，只含開團主檔。匯入後會寫回同一筆團務，開團專區會讀到這些欄位。圖片仍在開團專區管理。'
         : props.mode === 'export'
           ? '選擇要匯出的團務（不含已結束）。同一客戶多品項會分多列；續列名字請留空。付款狀態寫日期與後五碼，例如 11/20 #66666，沒有則空白。'
-          : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同；可勾選要匯入的團務，逐團選擇後再確認。若含開團主檔列，團務資訊也會更新並同步到開團專區。'
+          : '上傳 Excel 後先預覽。可勾選要匯入的團務。系統裡已有的團會更新；還沒有的團，只要檔案有開團主檔，就會新建並同步到開團專區。'
 
   const emptyText =
     props.mode === 'exportFull' || props.mode === 'exportInfo'
@@ -282,9 +282,11 @@ export function V50GroupExcelModal(props: Props) {
                         />
                         <span className="v50-excel-row-name">{p.groupName}</span>
                         <span className="v50-excel-row-meta">
-                          {p.groupId
-                            ? `可新增 ${p.added}${p.updated ? ` · 可更新 ${p.updated}` : ''}${p.groupPatch ? ' · 開團資訊' : ''} · 失敗 ${p.failed}`
-                            : `失敗 ${p.failed}`}
+                          {p.createGroup
+                            ? `新建團務${p.added ? ` · 客訂 ${p.added}` : ''}${p.failed ? ` · 失敗 ${p.failed}` : ''}`
+                            : p.groupId
+                              ? `可新增 ${p.added}${p.updated ? ` · 可更新 ${p.updated}` : ''}${p.groupPatch ? ' · 開團資訊' : ''} · 失敗 ${p.failed}`
+                              : `失敗 ${p.failed}`}
                         </span>
                       </label>
                     </li>

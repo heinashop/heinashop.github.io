@@ -15,6 +15,7 @@ import type {
   GroupBuyGroup,
   GroupBuyOrder,
 } from '../../api/types'
+import { materializeImportedGroup } from './v50ExcelBridge'
 import { V50GroupInfoCard } from './V50GroupInfoCard'
 import { syncV50OrderToDaigou, syncV50GroupOrdersToDaigou, findSyncedDaigouOrderId, removeSyncedDaigouOrder, reconcileShippingQueueFromDaigou } from './v50DaigouSync'
 import { removePaymentReportsForOrder, syncPaymentReportsForOrderPaymentChange } from './paymentReportLogic'
@@ -468,6 +469,10 @@ export function V50GroupOpsPage() {
       const update = byId.get(g.id)
       return update ? { ...g, ...(update.groupPatch || {}), orders: update.orders } : g
     })
+    for (const update of updates) {
+      if (next.some((g) => g.id === update.groupId)) continue
+      next.push(materializeImportedGroup(update))
+    }
     for (const g of next) {
       const update = byId.get(g.id)
       if (!update) continue
