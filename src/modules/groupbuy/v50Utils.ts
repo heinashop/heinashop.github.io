@@ -1,6 +1,7 @@
 import type { GroupBuyGroup, GroupBuyItem, GroupBuyOrder, GroupBuyPurchaseCost } from '../../api/types'
 import type { Group, Order, Shipment } from '../../daigou/types'
 import { normalizeCustomerNameKey, resolveOrderCustomerDisplayName } from './customerNameKey'
+import { compareOfficialShipDate } from './shipDateText'
 
 export function calcItemsTotalTwd(items: GroupBuyItem[]): number {
   return items.reduce((s, it) => s + (Number(it.twd) || 0) * (Number(it.qty) || 1), 0)
@@ -358,7 +359,11 @@ export function sortGroups(list: GroupBuyGroup[], sortKey: GroupSortKey): GroupB
     case 'saleEnd':
       return copy.sort((a, b) => groupDateSortKey(a.saleEndDate) - groupDateSortKey(b.saleEndDate))
     case 'officialShip':
-      return copy.sort((a, b) => groupDateSortKey(a.officialShipDate) - groupDateSortKey(b.officialShipDate))
+      return copy.sort((a, b) => {
+        const byDate = compareOfficialShipDate(a.officialShipDate, b.officialShipDate)
+        if (byDate !== 0) return byDate
+        return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant')
+      })
     default:
       return copy
   }

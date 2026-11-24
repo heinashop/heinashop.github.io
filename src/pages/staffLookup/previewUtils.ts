@@ -1,6 +1,7 @@
 import type { Group, Order, Shipment } from '../../daigou/types'
 import { itemTotalTwd } from '../../daigou/logic/orderCalc'
 import { getPaymentStatusLabel } from '../../daigou/statusDisplay'
+import { officialShipSortKey } from '../../modules/groupbuy/shipDateText'
 import {
   countShippingQueueRows,
   customerFacingGroupStatus,
@@ -28,10 +29,7 @@ export function dueDepositAmount(order: Order) {
 }
 
 export function shipDateSortKey(text?: string): number {
-  const s = String(text || '').trim()
-  if (!s) return Number.POSITIVE_INFINITY
-  const ms = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s)
-  return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
+  return officialShipSortKey(text)
 }
 
 export function depositLineForBucket(order: Order, bucket?: DaigouOrderBucket) {

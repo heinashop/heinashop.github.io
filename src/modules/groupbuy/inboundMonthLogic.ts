@@ -1,5 +1,6 @@
 import type { GroupBuyGroup } from '../../api/types'
 import { isInGroupOps } from './groupLifecycle'
+import { compareOfficialShipDate, parseShipDateText } from './shipDateText'
 import { normalizeGroupStatus, type V50GroupStatus } from './v50Utils'
 
 export type YearMonth = { year: number; month: number }
@@ -19,21 +20,6 @@ export type InboundMonthLists = {
   leftWarehouse: GroupBuyGroup[]
   overdue: GroupBuyGroup[]
   unset: GroupBuyGroup[]
-}
-
-const CN_MONTH: Record<string, number> = {
-  一: 1,
-  二: 2,
-  三: 3,
-  四: 4,
-  五: 5,
-  六: 6,
-  七: 7,
-  八: 8,
-  九: 9,
-  十: 10,
-  十一: 11,
-  十二: 12,
 }
 
 export function ymFromDate(d = new Date()): YearMonth {
@@ -66,34 +52,16 @@ export function compareYearMonth(a: YearMonth, b: YearMonth): number {
 }
 
 export function parseOfficialShipMonth(raw: string | undefined): OfficialShipParse {
-  const s = String(raw || '').trim()
-  if (!s || /未定|待定|不明|tbd|n\/a/i.test(s)) {
-    return { raw: s, year: null, month: null, kind: 'unset' }
+  const parsed = parseShipDateText(raw)
+  if (parsed.unset || parsed.month == null) {
+    return { raw: parsed.raw, year: null, month: null, kind: 'unset' }
   }
-
-  const iso = s.match(/(\d{4})[-/.年](\d{1,2})/)
-  if (iso) {
-    const month = Number(iso[2])
-    if (month >= 1 && month <= 12) {
-      return { raw: s, year: Number(iso[1]), month, kind: 'exact' }
-    }
+  return {
+    raw: parsed.raw,
+    year: parsed.year,
+    month: parsed.month,
+    kind: parsed.year == null ? 'month-only' : 'exact',
   }
-
-  const numMonth = s.match(/(\d{1,2})\s*月/)
-  if (numMonth) {
-    const month = Number(numMonth[1])
-    if (month >= 1 && month <= 12) {
-      return { raw: s, year: null, month, kind: 'month-only' }
-    }
-  }
-
-  const cnMonth = s.match(/(十[一二]|十|[一二三四五六七八九])月/)
-  if (cnMonth) {
-    const month = CN_MONTH[cnMonth[1]]
-    if (month) return { raw: s, year: null, month, kind: 'month-only' }
-  }
-
-  return { raw: s, year: null, month: null, kind: 'unset' }
 }
 
 export function matchesOfficialShipMonth(parsed: OfficialShipParse, ym: YearMonth): boolean {
@@ -116,9 +84,9 @@ function resolvedShipYm(parsed: OfficialShipParse, fallbackYear: number): YearMo
 }
 
 function sortByShipThenName(a: GroupBuyGroup, b: GroupBuyGroup): number {
-  const as = String(a.officialShipDate || '')
-  const bs = String(b.officialShipDate || '')
-  return as.localeCompare(bs, 'zh-Hant') || String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant')
+  const byDate = compareOfficialShipDate(a.officialShipDate, b.officialShipDate)
+  if (byDate !== 0) return byDate
+  return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant')
 }
 
 /** 官方出貨月＝該月：預計進日本倉／已在倉／已離倉；本月另外列出逾期未進倉與未填出貨月 */

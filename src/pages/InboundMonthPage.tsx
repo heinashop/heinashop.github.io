@@ -150,7 +150,7 @@ export function InboundMonthPage() {
         {loading ? <p className="inbound-loading">載入中…</p> : null}
 
         {!loading && watchCount === 0 && lists.inWarehouse.length === 0 && lists.leftWarehouse.length === 0 && lists.unset.length === 0 ? (
-          <Empty title="這個月沒有對得到官方出貨月的團" hint="可按左右切換月份，或到團務把官方出貨日補成 2026-11 這種年月。" />
+          <Empty title="這個月沒有對得到官方出貨月的團" hint="可按左右切換月份。官方出貨日寫 2026/10 或 2027/02月也會歸到該月。" />
         ) : null}
 
         {SECTIONS.map((sec) => {
