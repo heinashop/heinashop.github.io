@@ -70,6 +70,13 @@
   font-weight: 600;
 }
 
+.v50-ocard-paynote {
+  margin: 0;
+  color: #6d5b8a;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .v50-ocard-side {
   display: flex;
   flex-direction: row;

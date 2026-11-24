@@ -1,7 +1,7 @@
 import type { GroupBuyOrder } from '../../api/types'
 import { useDaigouStore } from '../../daigou/store'
 import { findSyncedDaigouOrderId } from './v50DaigouSync'
-import { getOrderShippingReminder, isV50CodPayment } from './v50Utils'
+import { formatPaymentNoteLabel, getOrderShippingReminder, isV50CodPayment } from './v50Utils'
 import './v50OrderMiniCard.css'
 
 type Props = {
@@ -34,6 +34,7 @@ export function V50OrderMiniCard({ order, onOpen, onEdit, onDelete }: Props) {
   const depositAmt = isCod ? 0 : Number(order.deposit || 0)
   const balanceLabel = isCod ? '貨到應收' : '尾款'
   const balanceAmt = Number(order.balance || (isCod ? order.totalTwd : 0) || 0)
+  const payNote = formatPaymentNoteLabel(order.paymentInfo)
 
   return (
     <article className={unpaid ? 'v50-ocard v50-ocard--unpaid' : 'v50-ocard'}>
@@ -49,6 +50,7 @@ export function V50OrderMiniCard({ order, onOpen, onEdit, onDelete }: Props) {
           <span className="v50-ocard-balance">
             {balanceLabel} ${balanceAmt.toLocaleString()}
           </span>
+          {payNote ? <span className="v50-ocard-paynote">{payNote}</span> : null}
         </p>
       </button>
       <div className="v50-ocard-side">

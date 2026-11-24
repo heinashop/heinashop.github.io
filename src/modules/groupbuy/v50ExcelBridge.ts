@@ -3,6 +3,7 @@ import type { GroupBuyGroup, GroupBuyItem, GroupBuyOrder } from '../../api/types
 import {
   calcItemsTotalTwd,
   calcOrderBalance,
+  formatPaymentNoteLabel,
   normalizeGroupStatus,
   suggestDeposit,
 } from './v50Utils'
@@ -38,25 +39,6 @@ function paidDepositCell(order: GroupBuyOrder): number | '' {
   const pay = String(order.paymentStatus || '').trim()
   if (pay !== '已付訂金' && pay !== '已付款' && pay !== '已結清') return ''
   return Number(order.deposit) || 0
-}
-
-/** 付款備註：日期 + #後五碼，例如 11/20 #66666。沒有可辨識內容就留空。 */
-function formatPaymentNoteCell(info: string): string {
-  const raw = String(info || '').trim()
-  if (!raw) return ''
-  const fiveMatch = raw.match(/#\s*(\d{5})\b/) || raw.match(/後五碼\s*#?\s*(\d{5})/)
-  const five = fiveMatch?.[1] || ''
-  const full = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/)
-  const short = !full ? raw.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})(?!\d)/) : null
-  const date = full
-    ? `${Number(full[2])}/${Number(full[3])}`
-    : short
-      ? `${Number(short[1])}/${Number(short[2])}`
-      : ''
-  if (date && five) return `${date} #${five}`
-  if (date) return date
-  if (five) return `#${five}`
-  return ''
 }
 
 function classifyPayCell(text: string): { status: string; note: string; deposit: number | null } {
@@ -167,7 +149,7 @@ export function exportV50GroupsToXlsx(groups: GroupBuyGroup[], filename?: string
           idx === 0 ? order.domesticShip || 0 : '',
           idx === 0 ? order.intlShip || 0 : '',
           idx === 0 ? (Number.isFinite(Number(order.balance)) ? Number(order.balance) : '') : '',
-          idx === 0 ? formatPaymentNoteCell(order.paymentInfo) : '',
+          idx === 0 ? formatPaymentNoteLabel(order.paymentInfo) : '',
         ])
       })
     }
