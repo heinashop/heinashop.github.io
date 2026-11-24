@@ -11,7 +11,7 @@ import {
 import './v50GroupExcelModal.css'
 
 type ExportProps = {
-  mode: 'export'
+  mode: 'export' | 'exportInfo'
   groups: GroupBuyGroup[]
   onClose: () => void
 }
@@ -51,7 +51,7 @@ function activeGroups(groups: GroupBuyGroup[]) {
 }
 
 function eligibleGroups(mode: Props['mode'], groups: GroupBuyGroup[]) {
-  if (mode === 'exportFull') return groups
+  if (mode === 'exportFull' || mode === 'exportInfo') return groups
   return activeGroups(groups)
 }
 
@@ -158,24 +158,29 @@ export function V50GroupExcelModal(props: Props) {
     props.onClose()
   }
 
-  const isExportPick = props.mode === 'export' || props.mode === 'exportFull'
+  const isExportPick = props.mode === 'export' || props.mode === 'exportFull' || props.mode === 'exportInfo'
+  const infoOnly = props.mode === 'exportInfo'
 
   const title =
     props.mode === 'exportFull'
       ? '匯出完整團務備份'
-      : props.mode === 'export'
-        ? '匯出 Excel'
-        : '匯入 Excel'
+      : props.mode === 'exportInfo'
+        ? '匯出團務資訊'
+        : props.mode === 'export'
+          ? '匯出 Excel'
+          : '匯入 Excel'
 
   const subtitle =
     props.mode === 'exportFull'
       ? '勾選要備份的團務（含已結束）。每團一工作表，包含開團主檔欄位與客訂明細；圖片仍在開團專區管理。也可下載僅含開團資訊、可逐團匯入的精簡檔。'
-      : props.mode === 'export'
-        ? '選擇要匯出的團務（不含已結束）。同一客戶多品項會分多列；續列名字請留空。付款狀態寫日期與後五碼，例如 11/20 #66666，沒有則空白。'
-        : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同；可勾選要匯入的團務，逐團選擇後再確認。若含開團主檔列，團務資訊也會更新並同步到開團專區。'
+      : props.mode === 'exportInfo'
+        ? '勾選要匯出的團務（含已結束）。每團一個工作表，只含開團主檔。匯入後會寫回同一筆團務，開團專區會讀到這些欄位。圖片仍在開團專區管理。'
+        : props.mode === 'export'
+          ? '選擇要匯出的團務（不含已結束）。同一客戶多品項會分多列；續列名字請留空。付款狀態寫日期與後五碼，例如 11/20 #66666，沒有則空白。'
+          : '上傳 Excel 後先預覽。每個工作表名稱需與團務名稱相同；可勾選要匯入的團務，逐團選擇後再確認。若含開團主檔列，團務資訊也會更新並同步到開團專區。'
 
   const emptyText =
-    props.mode === 'exportFull'
+    props.mode === 'exportFull' || props.mode === 'exportInfo'
       ? '目前沒有任何團務可匯出。'
       : '目前沒有可操作的團務（已結束以外的團務為空）。'
 
@@ -225,21 +230,23 @@ export function V50GroupExcelModal(props: Props) {
               <button type="button" className="v50-excel-btn v50-excel-btn--ghost" onClick={props.onClose}>
                 取消
               </button>
-              <button
-                type="button"
-                className="v50-excel-btn v50-excel-btn--ghost"
-                onClick={handleExportInfo}
-                disabled={!selected.size}
-              >
-                匯出開團資訊
-              </button>
+              {infoOnly ? null : (
+                <button
+                  type="button"
+                  className="v50-excel-btn v50-excel-btn--ghost"
+                  onClick={handleExportInfo}
+                  disabled={!selected.size}
+                >
+                  匯出開團資訊
+                </button>
+              )}
               <button
                 type="button"
                 className="v50-excel-btn v50-excel-btn--primary"
-                onClick={handleExport}
+                onClick={infoOnly ? handleExportInfo : handleExport}
                 disabled={!selected.size}
               >
-                下載 Excel
+                {infoOnly ? '下載團務資訊' : '下載 Excel'}
               </button>
             </div>
           </>

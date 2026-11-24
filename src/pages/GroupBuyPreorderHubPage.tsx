@@ -102,7 +102,7 @@ export function GroupBuyPreorderHubPage() {
   const [portalConfig, setPortalConfig] = useState<GroupBuyAppData['portalConfig'] | null>(null)
   const [exchangeRate, setExchangeRate] = useState(0.22)
   const [statusMsg, setStatusMsg] = useState('')
-  const [excelModal, setExcelModal] = useState<'export' | 'exportFull' | 'import' | null>(null)
+  const [excelModal, setExcelModal] = useState<'export' | 'exportFull' | 'exportInfo' | 'import' | null>(null)
   const [paymentExportOpen, setPaymentExportOpen] = useState(false)
   const [paymentFrom, setPaymentFrom] = useState('')
   const [paymentTo, setPaymentTo] = useState('')
@@ -839,6 +839,20 @@ export function GroupBuyPreorderHubPage() {
                       <span className="gb-hub-action-desc">與匯出欄位一致</span>
                     </span>
                   </button>
+                  <button type="button" className="gb-hub-action" onClick={() => setExcelModal('exportInfo')}>
+                    <span className="gb-hub-action-icon"><FileDown className="h-4 w-4" aria-hidden /></span>
+                    <span className="gb-hub-action-text">
+                      <span className="gb-hub-action-name">匯出團務資訊</span>
+                      <span className="gb-hub-action-desc">勾選團務，只匯出開團主檔</span>
+                    </span>
+                  </button>
+                  <button type="button" className="gb-hub-action" onClick={() => setExcelModal('import')}>
+                    <span className="gb-hub-action-icon"><FileUp className="h-4 w-4" aria-hidden /></span>
+                    <span className="gb-hub-action-text">
+                      <span className="gb-hub-action-name">匯入團務資訊</span>
+                      <span className="gb-hub-action-desc">逐團勾選，寫回並同步開團專區</span>
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -876,8 +890,6 @@ export function GroupBuyPreorderHubPage() {
                       <span className="gb-hub-action-desc">姓名、LINE、備註等</span>
                     </span>
                   </button>
-                </div>
-                <div className="gb-hub-import-row">
                   <input
                     ref={customerFileRef}
                     type="file"
@@ -885,12 +897,17 @@ export function GroupBuyPreorderHubPage() {
                     className="hidden"
                     onChange={(e) => void onCustomerImport(e.target.files?.[0] ?? null)}
                   />
-                  <Btn variant="secondary" className="!text-xs w-full sm:w-auto" onClick={() => customerFileRef.current?.click()}>
-                    <FileUp className="h-3.5 w-3.5" />
-                    客人列表匯入
-                  </Btn>
-                  {customerImportMsg ? <p className="gb-hub-import-msg">{customerImportMsg}</p> : null}
+                  <button type="button" className="gb-hub-action" onClick={() => customerFileRef.current?.click()}>
+                    <span className="gb-hub-action-icon gb-hub-action-icon--muted">
+                      <FileUp className="h-4 w-4" aria-hidden />
+                    </span>
+                    <span className="gb-hub-action-text">
+                      <span className="gb-hub-action-name">客人列表匯入</span>
+                      <span className="gb-hub-action-desc">姓名、LINE、備註等</span>
+                    </span>
+                  </button>
                 </div>
+                {customerImportMsg ? <p className="gb-hub-import-msg">{customerImportMsg}</p> : null}
               </div>
             </div>
           </div>
@@ -899,6 +916,9 @@ export function GroupBuyPreorderHubPage() {
 
       {excelModal === 'export' ? (
         <V50GroupExcelModal mode="export" groups={groups} onClose={() => setExcelModal(null)} />
+      ) : null}
+      {excelModal === 'exportInfo' ? (
+        <V50GroupExcelModal mode="exportInfo" groups={groups} onClose={() => setExcelModal(null)} />
       ) : null}
       {excelModal === 'exportFull' ? (
         <V50GroupExcelModal mode="exportFull" groups={groups} onClose={() => setExcelModal(null)} />
