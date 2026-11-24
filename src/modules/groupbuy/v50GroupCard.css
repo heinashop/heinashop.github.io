@@ -346,6 +346,32 @@
   gap: 1rem;
 }
 
+.v50-ship-buckets {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.v50-ship-bucket-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.7rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.v50-ship-bucket-title span {
+  display: inline-flex;
+  min-width: 1.4rem;
+  justify-content: center;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(186, 168, 206, 0.35);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
 .v50-order-totals {
   display: flex;
   flex-wrap: wrap;

@@ -1,6 +1,7 @@
 import type { GroupBuyChannel, GroupBuyGroup, PublicGroupCatalogItem } from '../../api/types'
 import { normalizeGroupChannel } from '../../modules/groupbuy/groupBuyHubAnalytics'
 import { isPortalListed } from '../../modules/groupbuy/groupLifecycle'
+import { compareOfficialShipDate } from '../../modules/groupbuy/shipDateText'
 import { daysUntil, localTodayIso, normalizeGroupStatus } from '../../modules/groupbuy/v50Utils'
 import { normalizeGroupImageUrls, primaryGroupImageUrl, openGroupDetailHref } from './openGroupImages'
 
@@ -142,7 +143,7 @@ export function sortOpenGroupsBy(
   }
   if (key === 'officialShip') {
     return copy.sort((a, b) => {
-      const d = dateSortAsc(a.officialShipDate) - dateSortAsc(b.officialShipDate)
+      const d = compareOfficialShipDate(a.officialShipDate, b.officialShipDate)
       if (d !== 0) return d
       return a.name.localeCompare(b.name, 'zh-Hant')
     })

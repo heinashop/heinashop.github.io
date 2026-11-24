@@ -15,6 +15,7 @@ import type {
   GroupBuyGroup,
   GroupBuyOrder,
 } from '../../api/types'
+import { officialShipBucketLabel } from './shipDateText'
 import { materializeImportedGroup } from './v50ExcelBridge'
 import { V50GroupInfoCard } from './V50GroupInfoCard'
 import { syncV50OrderToDaigou, syncV50GroupOrdersToDaigou, findSyncedDaigouOrderId, removeSyncedDaigouOrder, reconcileShippingQueueFromDaigou } from './v50DaigouSync'
@@ -86,6 +87,17 @@ const STATUS_TAB_ICONS: Record<V50GroupStatus, typeof Hand> = {
 
 function newId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`
+}
+
+function officialShipBuckets(groups: GroupBuyGroup[]) {
+  const buckets: { label: string; groups: GroupBuyGroup[] }[] = []
+  for (const group of groups) {
+    const label = officialShipBucketLabel(group.officialShipDate)
+    const last = buckets[buckets.length - 1]
+    if (last && last.label === label) last.groups.push(group)
+    else buckets.push({ label, groups: [group] })
+  }
+  return buckets
 }
 
 function formToGroup(values: GroupSetupFormValues, existing?: GroupBuyGroup): GroupBuyGroup {
@@ -774,6 +786,28 @@ export function V50GroupOpsPage() {
             <p className="text-body text-ds-text-muted">
               {search.trim() ? `找不到符合「${search.trim()}」的團務。` : '此分類尚無團務。'}
             </p>
+          ) : groupSort === 'officialShip' ? (
+            <div className="v50-ship-buckets">
+              {officialShipBuckets(filteredGroups).map((bucket) => (
+                <section key={bucket.label} className="v50-ship-bucket">
+                  <h3 className="v50-ship-bucket-title">
+                    {bucket.label}
+                    <span>{bucket.groups.length}</span>
+                  </h3>
+                  <div className="v50-grid">
+                    {bucket.groups.map((g) => (
+                      <V50GroupInfoCard
+                        key={g.id}
+                        group={g}
+                        onOpen={() => setViewGroupId(g.id)}
+                        onEdit={() => openEditGroup(g)}
+                        onDelete={() => void deleteGroup(g)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
           ) : (
             <div className="v50-grid">
               {filteredGroups.map((g) => (
