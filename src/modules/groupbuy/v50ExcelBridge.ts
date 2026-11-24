@@ -59,11 +59,31 @@ function formatPaymentNoteCell(info: string): string {
   return ''
 }
 
-function classifyPayCell(text: string): { status: string; note: string } {
-  const t = text.trim()
-  if (!t) return { status: '', note: '' }
-  if (KNOWN_PAY_STATUSES.has(t)) return { status: t, note: '' }
-  return { status: '', note: t }
+function classifyPayCell(text: string): { status: string; note: string; deposit: number | null } {
+  const t = String(text || '').trim()
+  if (!t) return { status: '', note: '', deposit: null }
+  if (KNOWN_PAY_STATUSES.has(t)) return { status: t, note: '', deposit: null }
+
+  const rules: { re: RegExp; status: string }[] = [
+    { re: /貨到付款|貨到付/, status: '貨到付款' },
+    { re: /已付訂金|已收訂金|訂金已付|有付訂金|有收訂金|有訂金|付了訂金|收了訂金|付訂金/, status: '已付訂金' },
+    { re: /已結清|已付清|全額付清|已付全額/, status: '已結清' },
+    { re: /已付款/, status: '已付款' },
+    { re: /未付款|尚未付款/, status: '未付款' },
+  ]
+  for (const rule of rules) {
+    const found = t.match(rule.re)
+    if (!found || found.index == null) continue
+    let rest = `${t.slice(0, found.index)} ${t.slice(found.index + found[0].length)}`
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^[（(：:，,、/／\s]+|[）)：:，,、/／\s]+$/g, '')
+      .trim()
+    const onlyMoney = rest.match(/^(\d+(?:\.\d+)?)(?:元)?$/)
+    if (onlyMoney) return { status: rule.status, note: '', deposit: Number(onlyMoney[1]) }
+    return { status: rule.status, note: rest, deposit: null }
+  }
+  return { status: '', note: t, deposit: null }
 }
 
 function norm(s: string) {
@@ -334,7 +354,7 @@ export function downloadV50OrderTemplateXlsx() {
     ['3. 台幣單價=每件；台幣小計=單價×數量。日幣總額=日幣單價×數量（匯出用，匯入可略）。'],
     ['4. 匯入可只填台幣小計或日幣總額，系統會除以數量得單價。'],
     ['5. 訂金請填在該客訂第一列。有填就以表上的為準；留空則沿用既有客訂或由系統計算。'],
-    ['6. 付款狀態填付款備註：日期與後五碼，例如 11/20 #66666。沒有就留空，不會改掉原本的付款狀況。'],
+    ['6. 付款狀態可填「已付訂金」或「有訂金」，匯入會改成已付訂金。日期與後五碼可寫在後面，例如「已付訂金 11/20 #66666」。只有備註、沒有這些字時，不會改掉原本的付款狀況。'],
     ['7. 尾款由系統依總額、訂金與運費計算，匯入時可留空。'],
     ['8. 多團同時匯入：每個團務一個工作表，工作表名稱請與團務名稱相同。'],
   ]
@@ -440,8 +460,9 @@ function parseRowsToBlocks(rows: Record<string, unknown>[]): V50ImportParseResul
     const depositText = pick(row, '訂金')
     if (depositText !== '') cur!.deposit = numCell(row, '訂金')
     const noteCol = pick(row, '付款備註', '支付備註')
-    const payCell = classifyPayCell(pick(row, '付款狀態', '支付狀態'))
+    const payCell = classifyPayCell(pick(row, '付款狀態', '支付狀態', '付款情形', '收款狀態'))
     if (payCell.status) cur!.paymentStatus = payCell.status
+    if (cur!.deposit == null && payCell.deposit != null) cur!.deposit = payCell.deposit
     const note = noteCol || payCell.note
     if (note) cur!.paymentNote = note
 
