@@ -336,7 +336,7 @@ export function downloadV50OrderTemplateXlsx() {
     ['3. 台幣單價=每件；台幣小計=單價×數量。日幣總額=日幣單價×數量（匯出用，匯入可略）。'],
     ['4. 匯入可只填台幣小計或日幣總額，系統會除以數量得單價。'],
     ['5. 訂金請填在該客訂第一列。有填就以表上的為準；留空則沿用既有客訂或由系統計算。'],
-    ['6. 付款狀態可填「已付訂金」或「有訂金」，匯入會改成已付訂金。日期與後五碼可寫在後面，例如「已付訂金 11/20 #66666」。只有備註、沒有這些字時，不會改掉原本的付款狀況。'],
+    ['6. 付款狀態寫日期與後五碼，例如 8/11 #18615，或訂金欄有金額，匯入會改成已付訂金。若要維持未付款，請在付款狀態填「未付款」，且訂金欄留空。'],
     ['7. 尾款由系統依總額、訂金與運費計算，匯入時可留空。'],
     ['8. 多團同時匯入：每個團務一個工作表，工作表名稱請與團務名稱相同。'],
   ]
@@ -388,7 +388,14 @@ function parseRowsToBlocks(rows: Record<string, unknown>[]): V50ImportParseResul
   let cur: V50ImportBlock | null = null
 
   const flush = () => {
-    if (cur && cur.items.length) blocks.push(cur)
+    if (cur && cur.items.length) {
+      if (!cur.paymentStatus) {
+        const noted = Boolean(cur.paymentNote && formatPaymentNoteLabel(cur.paymentNote))
+        const paidDeposit = cur.deposit != null && cur.deposit > 0
+        if (noted || paidDeposit) cur.paymentStatus = '已付訂金'
+      }
+      blocks.push(cur)
+    }
     cur = null
   }
 
