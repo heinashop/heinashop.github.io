@@ -618,6 +618,8 @@ export type V50GroupImportPlan = {
   warnings: string[]
   orders: GroupBuyOrder[]
   groupPatch?: Partial<GroupBuyGroup>
+  /** 系統裡還沒有這個團，確認後會新建 */
+  createGroup?: boolean
 }
 
 function parseGroupInfoBoolean(value: string): boolean | undefined {
@@ -692,15 +694,51 @@ export type V50WorkbookImportPreview = {
   warnings: string[]
 }
 
+function exactImportGroup(name: string, groups: GroupBuyGroup[]): GroupBuyGroup | undefined {
+  const key = norm(name)
+  if (!key) return undefined
+  return groups.find((g) => norm(g.name) === key)
+}
+
 function matchImportGroup(sheetName: string, groups: GroupBuyGroup[]): GroupBuyGroup | undefined {
   const key = norm(sheetName)
   return (
-    groups.find((g) => norm(g.name) === key) ??
+    exactImportGroup(sheetName, groups) ??
     groups.find((g) => {
       const n = norm(g.name)
       return n.length >= 2 && (key.includes(n) || n.includes(key))
     })
   )
+}
+
+export function materializeImportedGroup(plan: {
+  groupId: string
+  orders: GroupBuyOrder[]
+  groupPatch?: Partial<GroupBuyGroup>
+}): GroupBuyGroup {
+  const patch = plan.groupPatch || {}
+  return {
+    id: plan.groupId,
+    name: String(patch.name || '').trim() || '未命名團務',
+    status: normalizeGroupStatus(String(patch.status || '已登記')),
+    channel: patch.channel === '場販' ? '場販' : '通販',
+    opsActive: patch.opsActive !== false,
+    portalListed: patch.portalListed !== false,
+    closingDate: String(patch.closingDate || ''),
+    saleEndDate: String(patch.saleEndDate || ''),
+    officialShipDate: String(patch.officialShipDate || ''),
+    purchaseDate: String(patch.purchaseDate || ''),
+    creditCard: String(patch.creditCard || ''),
+    jpyAmount: patch.jpyAmount ?? '',
+    orderId: String(patch.orderId || ''),
+    logisticsId: String(patch.logisticsId || ''),
+    purchaseLink: String(patch.purchaseLink || ''),
+    description: String(patch.description || ''),
+    remarks: String(patch.remarks || ''),
+    stockAlert: patch.stockAlert === true,
+    stockAlertNote: String(patch.stockAlertNote || ''),
+    orders: plan.orders || [],
+  }
 }
 
 /** 依工作表名稱對應團務，先試算可新增／可更新／失敗，不寫入資料 */
@@ -722,15 +760,42 @@ export function previewV50WorkbookImport(
     const ws = wb.Sheets[sheetName]
     const parsed = parseRowsToBlocks(sheetToRowRecords(ws))
     const groupPatch = parseGroupInfoRow(ws) || undefined
-    let group = matchImportGroup(sheetName, groups)
-    if (!group && loneGroup && dataSheets.length === 1) {
+    const patchName = String(groupPatch?.name || '').trim()
+    let group =
+      exactImportGroup(sheetName, groups) ??
+      (patchName ? exactImportGroup(patchName, groups) : undefined)
+    if (!group && !patchName && loneGroup && dataSheets.length === 1) {
       group = loneGroup
       warnings.push(`工作表「${sheetName}」未與團名相同，將匯入唯一團務「${group.name}」`)
     }
+    if (!group && !groupPatch) group = matchImportGroup(sheetName, groups)
     const rowFailed = parsed.failed || 0
+    if (!group && groupPatch) {
+      const createdId = `g_imp_${Date.now().toString(36)}_${(seq += 1).toString(16)}`
+      const shell = materializeImportedGroup({
+        groupId: createdId,
+        orders: [],
+        groupPatch: { ...groupPatch, name: patchName || sheetName },
+      })
+      const applied = applyV50ImportToGroup(shell, parsed.blocks, newId)
+      plans.push({
+        groupId: createdId,
+        groupName: shell.name,
+        sheetName,
+        added: applied.added,
+        updated: 0,
+        failed: rowFailed + applied.skipped,
+        warnings: [...parsed.warnings, ...applied.warnings],
+        orders: applied.orders,
+        groupPatch: { ...groupPatch, name: shell.name },
+        createGroup: true,
+      })
+      warnings.push(...parsed.warnings, ...applied.warnings)
+      continue
+    }
     if (!group) {
       const n = parsed.blocks.length + rowFailed || 1
-      warnings.push(`工作表「${sheetName}」找不到同名團務，${n} 筆失敗`)
+      warnings.push(`工作表「${sheetName}」找不到同名團務，也沒有開團主檔，${n} 筆失敗`)
       plans.push({
         groupId: '',
         groupName: sheetName,
@@ -738,7 +803,7 @@ export function previewV50WorkbookImport(
         added: 0,
         updated: 0,
         failed: n,
-        warnings: [`找不到同名團務`],
+        warnings: [`找不到同名團務，也沒有可新建的開團主檔`],
         orders: [],
       })
       continue
