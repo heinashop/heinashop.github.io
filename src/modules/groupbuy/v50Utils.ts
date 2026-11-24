@@ -495,6 +495,25 @@ export function getOrderShippingReminder(
 
 export const REMITTANCE_BANK_OPTIONS = ['國泰', '中信', '郵局', 'LINE Bank', '台新', '其他'] as const
 
+/** 小卡與匯出用：日期與後五碼，例如 8/20 #12345。認不出來就留空。 */
+export function formatPaymentNoteLabel(info: string | undefined | null): string {
+  const raw = String(info || '').trim()
+  if (!raw) return ''
+  const fiveMatch = raw.match(/#\s*(\d{5})\b/) || raw.match(/後五碼\s*#?\s*(\d{5})/)
+  const five = fiveMatch?.[1] || ''
+  const full = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/)
+  const short = !full ? raw.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})(?!\d)/) : null
+  const date = full
+    ? `${Number(full[2])}/${Number(full[3])}`
+    : short
+      ? `${Number(short[1])}/${Number(short[2])}`
+      : ''
+  if (date && five) return `${date} #${five}`
+  if (date) return date
+  if (five) return `#${five}`
+  return ''
+}
+
 /** 對帳沖銷後寫入客訂的匯款紀錄，例：2026/06/15 中信 #備註 */
 export function formatRemittancePaymentInfo(isoDate: string, bank: string, note?: string): string {
   const parts = isoDate.trim().split('-')
