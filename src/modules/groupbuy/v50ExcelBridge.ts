@@ -205,6 +205,66 @@ const FULL_BACKUP_DETAIL_HEADERS = [
   '支付備註',
 ] as const
 
+function excelSerialToYmd(serial: number): string {
+  const whole = Math.floor(serial)
+  if (whole < 20000 || whole > 80000) return String(serial)
+  const utc = new Date(Date.UTC(1899, 11, 30) + whole * 86400000)
+  const y = utc.getUTCFullYear()
+  const m = String(utc.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(utc.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/** 結單日、結束販賣日、購買日：保留 2026-09-03；Excel 日期序號轉回同一天。 */
+function normalizeImportDate(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear()
+    const m = String(value.getMonth() + 1).padStart(2, '0')
+    const d = String(value.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return excelSerialToYmd(value)
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s)
+    if (n > 20000 && n < 80000) return excelSerialToYmd(n)
+  }
+  const matched = s.match(/^(\d{4})[/.年](\d{1,2})[/.月](\d{1,2})/)
+  if (matched) {
+    return `${matched[1]}-${String(Number(matched[2])).padStart(2, '0')}-${String(Number(matched[3])).padStart(2, '0')}`
+  }
+  return s
+}
+
+const GROUP_INFO_DATE_KEYS = new Set<keyof GroupBuyGroup>(['closingDate', 'saleEndDate', 'purchaseDate'])
+
+function lockGroupInfoDateText(ws: XLSX.WorkSheet) {
+  const headers = ['結單日', '結束販賣日', '購買日']
+  const ref = ws['!ref']
+  if (!ref) return
+  const range = XLSX.utils.decode_range(ref)
+  const headerRow = range.s.r
+  const columns: number[] = []
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: headerRow, c })]
+    if (cell && headers.includes(String(cell.v || '').trim())) columns.push(c)
+  }
+  for (let r = headerRow + 1; r <= range.e.r; r++) {
+    const nameCell = ws[XLSX.utils.encode_cell({ r, c: range.s.c })]
+    if (!nameCell || String(nameCell.v || '').trim() === '') break
+    for (const c of columns) {
+      const addr = XLSX.utils.encode_cell({ r, c })
+      const cell = ws[addr]
+      if (!cell || cell.v == null || cell.v === '') continue
+      cell.t = 's'
+      cell.v = normalizeImportDate(cell.v)
+      cell.z = '@'
+    }
+  }
+}
+
 function sheetNameFromGroup(group: GroupBuyGroup): string {
   const rawName = String(group.name || '團務').trim() || '團務'
   let sheetName = rawName.slice(0, 31).replace(/[\\/*?:\[\]]/g, '_')
@@ -246,11 +306,9 @@ export function exportV50GroupInfoXlsx(groups: GroupBuyGroup[], filename?: strin
       sheetName = `${sheetName.slice(0, 28)}_${n}`
     }
     usedSheetNames.add(sheetName)
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.aoa_to_sheet([[...GROUP_INFO_HEADERS], groupInfoValues(group)]),
-      sheetName,
-    )
+    const ws = XLSX.utils.aoa_to_sheet([[...GROUP_INFO_HEADERS], groupInfoValues(group)])
+    lockGroupInfoDateText(ws)
+    XLSX.utils.book_append_sheet(wb, ws, sheetName)
   }
   const name = filename ?? `開團資訊-${new Date().toISOString().slice(0, 10)}.xlsx`
   XLSX.writeFile(wb, name.replace(/[\\/*?:\[\]]/g, '_'))
@@ -313,7 +371,9 @@ export function exportV50GroupsFullBackupXlsx(groups: GroupBuyGroup[], filename?
       })
     }
 
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), sheetName)
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    lockGroupInfoDateText(ws)
+    XLSX.utils.book_append_sheet(wb, ws, sheetName)
   }
 
   const name = filename ?? `團務完整備份-${ts}.xlsx`
@@ -652,9 +712,9 @@ function parseGroupInfoRow(ws: XLSX.WorkSheet): Partial<GroupBuyGroup> | null {
   const cellOf = (...aliases: string[]) => {
     for (const alias of aliases) {
       const idx = headers.findIndex((h) => norm(h) === norm(alias))
-      if (idx >= 0) return { found: true, value: String(values[idx] ?? '').trim() }
+      if (idx >= 0) return { found: true, value: String(values[idx] ?? '').trim(), raw: values[idx] }
     }
-    return { found: false, value: '' }
+    return { found: false, value: '', raw: '' as unknown }
   }
   const name = cellOf('團務名稱').value
   const statusText = cellOf('團務狀態', '狀態').value
@@ -676,7 +736,9 @@ function parseGroupInfoRow(ws: XLSX.WorkSheet): Partial<GroupBuyGroup> | null {
   ]
   for (const [aliases, key] of textFields) {
     const cell = cellOf(...aliases)
-    if (cell.found) (patch as Record<string, unknown>)[key] = cell.value
+    if (!cell.found) continue
+    const value = GROUP_INFO_DATE_KEYS.has(key) ? normalizeImportDate(cell.raw) : cell.value
+    ;(patch as Record<string, unknown>)[key] = value
   }
   const budget = cellOf('日幣預算總額')
   if (budget.found) patch.jpyAmount = budget.value
