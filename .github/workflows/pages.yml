@@ -38,6 +38,7 @@ jobs:
         run: npm run build
         env:
           VITE_BASE: /
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
           VITE_GAS_URL: ${{ vars.VITE_GAS_URL }}
 
       - name: Reject committed secrets in the bundle

@@ -1,0 +1,14 @@
+{
+  "name": "heina-sheets-api",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "durable_objects": {"bindings": [{"name": "HEINA_COORDINATOR", "class_name": "HeinaCoordinator"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["HeinaCoordinator"]}],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://heinashop.com,https://heinashop.github.io",
+    "HEINA_WRITES_ENABLED": "false"
+  },
+  "observability": {"enabled": false}
+}

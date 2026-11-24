@@ -1,0 +1,13 @@
+{
+  "note": "Source provenance only. Backend runs independently of Apps Script.",
+  "sha256": {
+    "Secrets.gs": "e467a15e613e8bbc496979bc850c5500b1b0ea86c97073741206c79025e01dfe",
+    "GroupBuy.gs": "fe334deb6a53eaf5cc516e7291c87f921e8887437fb5ec8a85c0c5925e6c855b",
+    "HeinaSafety.gs": "98acf23c8ffda9ec9073d57b21140dd5be97f15b2eb5a88340376c59e0763cb2",
+    "Ledger.gs": "5be09391590ea914566e95d018e4aaaafb531a00e33961b22a5312c9ea58f80c",
+    "Preorder.gs": "faa1c63c2a7dfc447cfc1a2309ff8ce37a1c65ef9f387647fb5a86e1ba1cc6e9",
+    "SystemHub.gs": "8a6366893a03e380f243828a11f530d476abd9eb2b34fc40c07220c31e3c8352",
+    "Storefront.gs": "72eeb1e958f645dca92dcd9a42f041eb99ff044c5ca65ba47b02085dc79dd605",
+    "Web.gs": "944db2bed2a154d45fd0f9d9002f39c41f7934664f0abc256a78bfcd2ecd6b08"
+  }
+}
