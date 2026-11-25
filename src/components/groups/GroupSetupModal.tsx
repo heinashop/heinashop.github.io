@@ -185,26 +185,14 @@ export function GroupSetupModal({ open, onClose, onSubmit, initialValues, title,
                 </Field>
               </div>
 
-              <div className="group-setup-row">
-                <Field label="信用卡資訊">
-                  <input
-                    className="group-setup-input"
-                    placeholder="卡名或尾碼四碼"
-                    value={form.cardPayNote}
-                    onChange={(e) => patch('cardPayNote', e.target.value)}
-                  />
-                </Field>
-                <Field label="日幣預算總額">
-                  <input
-                    type="number"
-                    min={0}
-                    className="group-setup-input"
-                    placeholder="¥"
-                    value={form.jpyAmountTotal}
-                    onChange={(e) => patch('jpyAmountTotal', e.target.value)}
-                  />
-                </Field>
-              </div>
+              <Field label="信用卡資訊" wide>
+                <input
+                  className="group-setup-input"
+                  placeholder="卡名或尾碼四碼"
+                  value={form.cardPayNote}
+                  onChange={(e) => patch('cardPayNote', e.target.value)}
+                />
+              </Field>
 
               <Field label="網站連結" wide>
                 <input

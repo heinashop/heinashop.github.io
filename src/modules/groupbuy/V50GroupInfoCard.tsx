@@ -69,21 +69,13 @@ export function V50GroupInfoCard({ group, onOpen, onEdit, onDelete }: Props) {
             <span className="v50-gcard-label">官方出貨日</span>
             <span className="v50-gcard-value">{showDate(group.officialShipDate)}</span>
           </div>
-          <div className="v50-gcard-field">
+          <div className="v50-gcard-field v50-gcard-field-wide">
             <span className="v50-gcard-label">信用卡資訊</span>
             <span className="v50-gcard-value">{dash(group.creditCard)}</span>
-          </div>
-          <div className="v50-gcard-field">
-            <span className="v50-gcard-label">訂單編號</span>
-            <span className="v50-gcard-value">{dash(group.orderId)}</span>
           </div>
           <div className="v50-gcard-field v50-gcard-field-wide">
             <span className="v50-gcard-label">備註</span>
             <span className="v50-gcard-value">{dash(group.remarks)}</span>
-          </div>
-          <div className="v50-gcard-field v50-gcard-field-wide">
-            <span className="v50-gcard-label">物流編號</span>
-            <span className="v50-gcard-value">{dash(group.logisticsId)}</span>
           </div>
           <div className="v50-gcard-field v50-gcard-field-wide">
             <span className="v50-gcard-label">網站連結</span>
