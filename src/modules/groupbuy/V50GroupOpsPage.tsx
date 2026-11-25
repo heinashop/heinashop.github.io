@@ -238,28 +238,39 @@ export function V50GroupOpsPage() {
       const shown = keepEnded(nextGroups)
       setGroups(shown)
       setConsolidationShipments(nextShips)
-      for (const g of shown) syncV50GroupOrdersToDaigou(g)
       setBankJournal(data.bankJournal || [])
       setPaymentReports(data.paymentReports || [])
       setExchangeRate(data.exchangeRate ?? 0.22)
       setPortalConfig(data.portalConfig)
       setEndedGroupCount(Number(data.endedGroupCount) || 0)
-      if (synced || nextShips !== ships) {
-        const { payload, mutationMode } = buildGroupSavePayload(rawGroups, nextGroups, {
-          bankJournal: data.bankJournal || [],
-          exchangeRate: data.exchangeRate ?? 0.22,
-          portalConfig: data.portalConfig,
-          paymentReports: data.paymentReports || [],
-          consolidationShipments: nextShips,
-        })
-        const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
-        baseGroupsRef.current = keepEnded(mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups)
-      } else {
+      setStatusMsg('')
+      if (!(synced || nextShips !== ships)) {
         baseGroupsRef.current = keepEnded(rawGroups)
+      }
+      try {
+        for (const g of shown) syncV50GroupOrdersToDaigou(g)
+      } catch (syncError) {
+        console.error(syncError)
+      }
+      if (synced || nextShips !== ships) {
+        try {
+          const { payload, mutationMode } = buildGroupSavePayload(rawGroups, nextGroups, {
+            bankJournal: data.bankJournal || [],
+            exchangeRate: data.exchangeRate ?? 0.22,
+            portalConfig: data.portalConfig,
+            paymentReports: data.paymentReports || [],
+            consolidationShipments: nextShips,
+          })
+          const saved = await api.call<SaveResult>({ module: 'groupbuy', action: 'saveAppData', payload })
+          baseGroupsRef.current = keepEnded(mutationMode ? applySavedRevisions(nextGroups, saved) : nextGroups)
+        } catch (saveError) {
+          console.error(saveError)
+          baseGroupsRef.current = keepEnded(rawGroups)
+        }
       }
     } catch (e) {
       console.error(e)
-      setStatusMsg('讀取失敗')
+      setStatusMsg(e instanceof Error && e.message ? e.message : '讀取失敗')
     } finally {
       setLoading(false)
     }
