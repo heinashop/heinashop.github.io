@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Building2, Flag, Hand, Package, Plus, RefreshCw, ShoppingCart, Truck, FileDown, FileUp } from 'lucide-react'
+import { Building2, Flag, Hand, Package, Plus, RefreshCw, Search, ShoppingCart, Truck, FileDown, FileUp, X } from 'lucide-react'
 import { Btn, PageHeader } from '../../components/ui'
 import { useDaigouStore } from '../../daigou/store'
 import { GroupSetupModal, type GroupSetupFormValues } from '../../components/groups/GroupSetupModal'
@@ -166,6 +166,7 @@ export function V50GroupOpsPage() {
   const [exchangeRate, setExchangeRate] = useState(0.22)
   const [statusMsg, setStatusMsg] = useState('')
   const [search, setSearch] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [endedGroupCount, setEndedGroupCount] = useState(0)
   const [endedGroups, setEndedGroups] = useState<GroupBuyGroup[] | null>(null)
   const endedGroupsRef = useRef<GroupBuyGroup[] | null>(null)
@@ -782,12 +783,30 @@ export function V50GroupOpsPage() {
             })}
           </div>
           <div className="v50-group-toolbar">
-            <input
-              className="heina-input gb-search"
-              placeholder="搜尋團名、訂單編號、採購單號、物流編號、刷卡金額…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <div className="v50-group-search">
+              <Search className="v50-group-search-icon" aria-hidden strokeWidth={2.25} />
+              <input
+                ref={searchInputRef}
+                className="v50-group-search-input"
+                aria-label="搜尋團務"
+                placeholder="搜尋團名、訂單編號、採購單號、物流編號、刷卡金額…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search ? (
+                <button
+                  type="button"
+                  className="v50-group-search-clear"
+                  aria-label="清除搜尋"
+                  onClick={() => {
+                    setSearch('')
+                    searchInputRef.current?.focus()
+                  }}
+                >
+                  <X aria-hidden strokeWidth={2.5} />
+                </button>
+              ) : null}
+            </div>
             <label className="v50-group-sort">
               <span className="v50-group-sort-label">排序</span>
               <select
