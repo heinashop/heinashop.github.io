@@ -91,7 +91,7 @@ export function reconcileShippingQueueFromDaigou() {
 }
 
 function ensureV50Customer(name: string) {
-  const trimmed = name.trim()
+  const trimmed = String(name ?? '').trim()
   const st = useDaigouStore.getState()
   const customer = st.customers.find(
     (c) =>
