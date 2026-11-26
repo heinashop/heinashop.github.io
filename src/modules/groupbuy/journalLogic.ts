@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx'
 import type { BankJournalRow, CustomerPaymentReport } from '../../api/types'
 import { formatYmd } from './v50Utils'
 
-export const JOURNAL_XLSX_HEADER = ['日期', '金額', '備註', '後五碼', 'ID'] as const
+export const JOURNAL_XLSX_HEADER = ['日期', '銀行', '金額', '備註', '後五碼', 'ID'] as const
 
 export function newJournalId(prefix = 'j') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`
@@ -214,6 +214,7 @@ export function sortJournalNewest(rows: BankJournalRow[]): BankJournalRow[] {
 export function journalToXlsxBuffer(rows: BankJournalRow[]): Uint8Array {
   const body = sortJournalNewest(rows).map((row) => [
     formatJournalDate(row.date),
+    String(row.bank || '').trim() || '待分類',
     Number(row.amount) || 0,
     displayJournalNote(row),
     formatLastFiveDisplay(displayJournalLastFive(row)),

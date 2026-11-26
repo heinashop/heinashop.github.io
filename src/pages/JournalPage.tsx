@@ -6,7 +6,7 @@ import { useApi } from '../context/useApi'
 import { isSheetEditing } from '../sync/sheetSync'
 import { useRemoteSlice } from '../sync/SheetSyncBridge'
 import type { BankJournalRow, CustomerPaymentReport, GroupBuyGroup } from '../api/types'
-import { localTodayIso } from '../modules/groupbuy/v50Utils'
+import { localTodayIso, REMITTANCE_BANK_OPTIONS } from '../modules/groupbuy/v50Utils'
 import {
   displayJournalLastFive,
   displayJournalNote,
@@ -22,11 +22,64 @@ import {
   popJournalUndo,
   pushJournalUndo,
   sortJournalNewest,
+  type JournalViewRow,
 } from '../modules/groupbuy/journalLogic'
 import './journalPage.css'
 
 function money(n: number) {
   return `NT$ ${Math.round(n || 0).toLocaleString('zh-TW')}`
+}
+
+function bankLabel(bank: string | undefined) {
+  const name = String(bank || '').trim()
+  return name || '待分類'
+}
+
+function uniqueSourceIds(list: { sourceId: string }[]) {
+  return [...new Set(list.map((row) => row.sourceId))]
+}
+
+function groupJournalByBank(list: JournalViewRow[]) {
+  const map = new Map<string, JournalViewRow[]>()
+  for (const row of list) {
+    const key = bankLabel(row.bank)
+    const bucket = map.get(key) || []
+    bucket.push(row)
+    map.set(key, bucket)
+  }
+  const preferred = [...REMITTANCE_BANK_OPTIONS, '待分類']
+  return [...map.keys()]
+    .sort((a, b) => {
+      const ia = preferred.indexOf(a as (typeof preferred)[number])
+      const ib = preferred.indexOf(b as (typeof preferred)[number])
+      if (ia === -1 && ib === -1) return a.localeCompare(b, 'zh-Hant')
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+    .map((bank) => ({ bank, rows: map.get(bank) || [] }))
+}
+
+function SelectBox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  indeterminate?: boolean
+  onChange: () => void
+  label: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate
+  }, [indeterminate])
+  return (
+    <label className="journal-check">
+      <input ref={ref} type="checkbox" checked={checked} onChange={onChange} aria-label={label} />
+    </label>
+  )
 }
 
 export function JournalPage() {
@@ -40,8 +93,10 @@ export function JournalPage() {
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [canUndo, setCanUndo] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [draft, setDraft] = useState({
     date: localTodayIso(),
+    bank: REMITTANCE_BANK_OPTIONS[0] as string,
     amount: '',
     note: '',
     lastFive: '',
@@ -123,7 +178,7 @@ export function JournalPage() {
     const row: BankJournalRow = {
       id: newJournalId('j_manual'),
       date,
-      bank: '待分類',
+      bank: draft.bank || '待分類',
       type: '收入',
       amount,
       category: '手動',
@@ -133,7 +188,7 @@ export function JournalPage() {
     setBusy(true)
     try {
       await persist([row, ...rows], true, 'upsert')
-      setDraft({ date: localTodayIso(), amount: '', note: '', lastFive: '' })
+      setDraft({ date: localTodayIso(), bank: draft.bank, amount: '', note: '', lastFive: '' })
       flash('已新增日記帳（不影響團務明細）')
     } catch (e) {
       console.error(e)
@@ -147,8 +202,8 @@ export function JournalPage() {
     const parts = viewRows.filter((row) => row.sourceId === id).length
     const message =
       parts > 1
-        ? `這筆匯款含 ${parts} 個團務，刪除會一併移除這些分行。團務明細與付款狀態不會被改動。`
-        : '確定刪除此筆日記帳？團務明細與付款狀態不會被改動。'
+        ? `這筆匯款含 ${parts} 個團務，刪除會一併移除這些分行。訂單、付款回報與對帳不會被改動。`
+        : '確定刪除此筆日記帳？訂單、付款回報與對帳不會被改動。'
     if (!window.confirm(message)) return
     setBusy(true)
     pushJournalUndo(rows)
@@ -159,8 +214,14 @@ export function JournalPage() {
         payload: { ids: [id], operationId: `journal_del_${Date.now()}_${Math.random().toString(16).slice(2, 6)}` },
       })
       setRows(sortJournalNewest(saved?.bankJournal || rows.filter((r) => r.id !== id)))
+      setSelected((prev) => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       refreshUndo()
-      flash('已刪除日記帳（團務明細未改）')
+      flash('已刪除日記帳（對帳與團務明細未改）')
     } catch (e) {
       console.error(e)
       popJournalUndo()
@@ -206,6 +267,56 @@ export function JournalPage() {
   }
 
   const viewRows = useMemo(() => journalViewRows(rows, reports, groups), [rows, reports, groups])
+  const bankGroups = useMemo(() => groupJournalByBank(viewRows), [viewRows])
+  const allSourceIds = useMemo(() => uniqueSourceIds(viewRows), [viewRows])
+
+  function toggleSource(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSources(ids: string[], on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (on) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+
+  async function removeSelected() {
+    const ids = [...selected]
+    const lineCount = viewRows.filter((row) => selected.has(row.sourceId)).length
+    if (!ids.length) return
+    if (!window.confirm(`刪除勾選的 ${lineCount} 列日記帳？訂單、付款回報與對帳不會被改動。`)) return
+    setBusy(true)
+    pushJournalUndo(rows)
+    try {
+      const saved = await api.call<{ bankJournal?: BankJournalRow[] }>({
+        module: 'groupbuy',
+        action: 'deleteBankJournalRows',
+        payload: { ids, operationId: `journal_del_${Date.now()}_${Math.random().toString(16).slice(2, 6)}` },
+      })
+      const drop = new Set(ids)
+      setRows(sortJournalNewest(saved?.bankJournal || rows.filter((row) => !drop.has(row.id))))
+      setSelected(new Set())
+      refreshUndo()
+      flash(`已刪除 ${lineCount} 列日記帳（對帳與團務明細未改）`)
+    } catch (e) {
+      console.error(e)
+      popJournalUndo()
+      refreshUndo()
+      flash(e instanceof Error ? e.message : '刪除失敗')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   function downloadXlsx() {
     const buf = journalToXlsxBuffer(viewRows)
@@ -255,7 +366,7 @@ export function JournalPage() {
         {status ? <div className="gb-toast">{status}</div> : null}
         <PageHeader
           title="日記帳"
-          subtitle="獨立帳本：增刪、匯入、還原都不會改團務明細或付款狀態。"
+          subtitle="獨立帳本：刪除、匯入、還原都只動日記帳，不會改訂單、付款回報或對帳。"
           action={
             <>
               <Btn variant="secondary" onClick={() => void load()}>
@@ -287,7 +398,7 @@ export function JournalPage() {
 
         <section className="journal-help">
           <p>
-            <strong>日記帳寫錯：</strong>刪該列，或按「還原上一版」。建議先「匯出 Excel」當備份；還原備份時上傳並選覆蓋。
+            <strong>核對後可刪：</strong>先匯出 Excel 到自己的表單。日記帳不用一直留，勾選後刪除不會改對帳、訂單或付款狀態。也可按「還原上一版」。
           </p>
           <p>
             <strong>沖銷／付款確認寫錯：</strong>到付款回報「返回待確認」，或在團務明細把付款改回未付款。日記帳那筆請在本頁另外刪除。
@@ -300,6 +411,16 @@ export function JournalPage() {
             <label>
               日期
               <input type="date" value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
+            </label>
+            <label>
+              銀行
+              <select value={draft.bank} onChange={(e) => setDraft((d) => ({ ...d, bank: e.target.value }))} aria-label="銀行">
+                {REMITTANCE_BANK_OPTIONS.map((bank) => (
+                  <option key={bank} value={bank}>
+                    {bank}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               金額
@@ -345,39 +466,91 @@ export function JournalPage() {
         {!loading && !rows.length ? (
           <Empty title="尚無日記帳" hint="確認付款或沖銷後會自動出現，或在上方手動新增。" />
         ) : (
-          <div className="journal-table" role="table" aria-label="日記帳">
-            <div className="journal-table-head" role="row">
-              <span role="columnheader">日期</span>
-              <span role="columnheader">金額</span>
-              <span role="columnheader">備註</span>
-              <span role="columnheader">後五碼</span>
-              <span role="columnheader"> </span>
+          <>
+            <div className="journal-toolbar">
+              <SelectBox
+                checked={allSourceIds.length > 0 && allSourceIds.every((id) => selected.has(id))}
+                indeterminate={selected.size > 0 && !allSourceIds.every((id) => selected.has(id))}
+                onChange={() => toggleSources(allSourceIds, !allSourceIds.every((id) => selected.has(id)))}
+                label="全選日記帳"
+              />
+              <span>全選</span>
+              <span className="journal-toolbar-count">
+                已選 {viewRows.filter((row) => selected.has(row.sourceId)).length} 列
+              </span>
+              <button type="button" className="journal-delete-selected" disabled={!selected.size || busy} onClick={() => void removeSelected()}>
+                <Trash2 className="h-4 w-4" />
+                刪除勾選
+              </button>
             </div>
-            {viewRows.map((row) => (
-              <div key={row.id} className="journal-table-row" role="row">
-                <span role="cell">{formatJournalDate(row.date) || '—'}</span>
-                <strong role="cell">{money(row.amount)}</strong>
-                <span role="cell">
-                  {displayJournalNote(row) || '—'}
-                  {row.operationId ? ` · 操作 ${row.operationId}` : ''}
-                  {row.reviewState ? ` · ${row.reviewState}` : ''}
-                </span>
-                <span className="journal-five" role="cell">
-                  {formatLastFiveDisplay(displayJournalLastFive(row))}
-                </span>
-                <span role="cell">
-                  <button
-                    type="button"
-                    className="journal-del"
-                    onClick={() => void removeRow(row.sourceId)}
-                    aria-label={row.split ? '刪除這筆匯款的全部分行' : '刪除'}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              </div>
-            ))}
-          </div>
+            {bankGroups.map((group) => {
+              const ids = uniqueSourceIds(group.rows)
+              const allOn = ids.length > 0 && ids.every((id) => selected.has(id))
+              const someOn = ids.some((id) => selected.has(id))
+              const subtotal = group.rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0)
+              return (
+                <section key={group.bank} className="journal-bank" aria-label={group.bank}>
+                  <header className="journal-bank-head">
+                    <SelectBox
+                      checked={allOn}
+                      indeterminate={someOn && !allOn}
+                      onChange={() => toggleSources(ids, !allOn)}
+                      label={`全選${group.bank}`}
+                    />
+                    <h2>{group.bank}</h2>
+                    <span>
+                      {group.rows.length} 列 · {money(subtotal)}
+                    </span>
+                  </header>
+                  <div className="journal-table" role="table" aria-label={`${group.bank}日記帳`}>
+                    <div className="journal-table-head" role="row">
+                      <span role="columnheader"> </span>
+                      <span role="columnheader">日期</span>
+                      <span role="columnheader">金額</span>
+                      <span role="columnheader">備註</span>
+                      <span role="columnheader">後五碼</span>
+                      <span role="columnheader"> </span>
+                    </div>
+                    {group.rows.map((row) => (
+                      <div key={row.id} className="journal-table-row" role="row">
+                        <span className="journal-check-cell" role="cell">
+                          <SelectBox
+                            checked={selected.has(row.sourceId)}
+                            onChange={() => toggleSource(row.sourceId)}
+                            label={`勾選 ${displayJournalNote(row) || '日記帳'}`}
+                          />
+                        </span>
+                        <span className="journal-date" role="cell">
+                          {formatJournalDate(row.date) || '—'}
+                        </span>
+                        <strong className="journal-amount" role="cell">
+                          {money(row.amount)}
+                        </strong>
+                        <span className="journal-note" role="cell">
+                          {displayJournalNote(row) || '—'}
+                          {row.operationId ? ` · 操作 ${row.operationId}` : ''}
+                          {row.reviewState ? ` · ${row.reviewState}` : ''}
+                        </span>
+                        <span className="journal-five" role="cell">
+                          {formatLastFiveDisplay(displayJournalLastFive(row))}
+                        </span>
+                        <span className="journal-del-cell" role="cell">
+                          <button
+                            type="button"
+                            className="journal-del"
+                            onClick={() => void removeRow(row.sourceId)}
+                            aria-label={row.split ? '刪除這筆匯款的全部分行' : '刪除'}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
+          </>
         )}
       </div>
     </PageLayout>
