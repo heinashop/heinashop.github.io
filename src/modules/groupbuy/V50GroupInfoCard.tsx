@@ -78,6 +78,10 @@ export function V50GroupInfoCard({ group, onOpen, onEdit, onDelete }: Props) {
             <span className="v50-gcard-value">{dash(group.remarks)}</span>
           </div>
           <div className="v50-gcard-field v50-gcard-field-wide">
+            <span className="v50-gcard-label">內部備註</span>
+            <span className="v50-gcard-value">{dash(group.privateNote)}</span>
+          </div>
+          <div className="v50-gcard-field v50-gcard-field-wide">
             <span className="v50-gcard-label">網站連結</span>
             {group.purchaseLink?.trim() ? (
               <a

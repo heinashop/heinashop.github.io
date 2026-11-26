@@ -21,6 +21,7 @@ export type GroupSetupFormValues = {
   imageUrls: string[]
   coverImageUrl: string
   remarks: string
+  privateNote: string
 }
 
 export const emptyGroupSetupForm = (): GroupSetupFormValues => ({
@@ -39,6 +40,7 @@ export const emptyGroupSetupForm = (): GroupSetupFormValues => ({
   imageUrls: [],
   coverImageUrl: '',
   remarks: '',
+  privateNote: '',
 })
 
 type Props = {
@@ -219,13 +221,23 @@ export function GroupSetupModal({ open, onClose, onSubmit, initialValues, title,
                 </div>
               ) : null}
 
-              <Field label="備註" wide>
+              <Field label="備註（客人看得到）" wide>
                 <textarea
                   className="group-setup-input group-setup-textarea"
                   placeholder="開團專區／團務小卡顯示的備註"
                   rows={2}
                   value={form.remarks}
                   onChange={(e) => patch('remarks', e.target.value)}
+                />
+              </Field>
+
+              <Field label="內部備註（只有你看得到）" wide>
+                <textarea
+                  className="group-setup-input group-setup-textarea"
+                  placeholder="不會出現在開團專區或顧客查單"
+                  rows={2}
+                  value={form.privateNote}
+                  onChange={(e) => patch('privateNote', e.target.value)}
                 />
               </Field>
 

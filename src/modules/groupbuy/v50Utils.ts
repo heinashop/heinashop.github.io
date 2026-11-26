@@ -104,14 +104,14 @@ export function daysUntil(iso: string, today = localTodayIso()): number | null {
   return Math.round((endMs - startMs) / 86400000)
 }
 
-/** 今日起 7 日內結單／結束販賣。已下單、已發貨、已結束不再提醒。 */
+/** 今日起 5 日內結單／結束販賣。已下單、已發貨、已結束不再提醒。 */
 export function summarizeImminentDates(
   groups: GroupBuyGroup[],
   today = localTodayIso(),
 ): DeadlineSummary {
   const closing: { label: string; days: number }[] = []
   const saleEnd: { label: string; days: number }[] = []
-  const soon = (days: number | null) => days !== null && days >= 0 && days <= 7
+  const soon = (days: number | null) => days !== null && days >= 0 && days <= 5
   const labelFor = (name: string, iso: string) => {
     const ymd = formatYmd(iso)
     const md = /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : ''
@@ -282,6 +282,7 @@ export function matchesV50GroupSearch(group: GroupBuyGroup, query: string): bool
     group.logisticsId,
     group.description,
     group.remarks,
+    group.privateNote,
     group.creditCard,
     ...(group.purchaseCosts?.map((c) => c.logisticsId) ?? []),
     ...(group.purchaseCosts?.map((c) => c.orderNumber) ?? []),
