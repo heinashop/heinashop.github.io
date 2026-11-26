@@ -5,14 +5,16 @@ import { PageLayout } from '../components/app/PageLayout'
 import { useApi } from '../context/useApi'
 import { isSheetEditing } from '../sync/sheetSync'
 import { useRemoteSlice } from '../sync/SheetSyncBridge'
-import type { BankJournalRow } from '../api/types'
+import type { BankJournalRow, CustomerPaymentReport, GroupBuyGroup } from '../api/types'
 import { localTodayIso } from '../modules/groupbuy/v50Utils'
 import {
   displayJournalLastFive,
   displayJournalNote,
+  formatJournalDate,
   formatLastFiveDisplay,
   journalFromXlsxBuffer,
   journalToXlsxBuffer,
+  journalViewRows,
   mergeJournalById,
   newJournalId,
   normalizeLastFive,
@@ -32,6 +34,8 @@ export function JournalPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<BankJournalRow[]>([])
+  const [reports, setReports] = useState<CustomerPaymentReport[]>([])
+  const [groups, setGroups] = useState<GroupBuyGroup[]>([])
   const [orderPaid, setOrderPaid] = useState(0)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -50,11 +54,18 @@ export function JournalPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.call<{ bankJournal?: BankJournalRow[]; groups?: Array<{ orders?: Array<{ deposit?: number }> }> }>({
+      const data = await api.call<{
+        bankJournal?: BankJournalRow[]
+        paymentReports?: CustomerPaymentReport[]
+        groups?: GroupBuyGroup[]
+      }>({
         module: 'groupbuy',
         action: 'getAppData',
+        payload: { groupScope: 'all' },
       })
       setRows(sortJournalNewest(data.bankJournal || []))
+      setReports(data.paymentReports || [])
+      setGroups(data.groups || [])
       const paid = (data.groups || []).reduce(
         (sum, group) => sum + (group.orders || []).reduce((inner, order) => inner + (Number(order.deposit) || 0), 0),
         0,
@@ -133,7 +144,12 @@ export function JournalPage() {
   }
 
   async function removeRow(id: string) {
-    if (!window.confirm('確定刪除此筆日記帳？團務明細與付款狀態不會被改動。')) return
+    const parts = viewRows.filter((row) => row.sourceId === id).length
+    const message =
+      parts > 1
+        ? `這筆匯款含 ${parts} 個團務，刪除會一併移除這些分行。團務明細與付款狀態不會被改動。`
+        : '確定刪除此筆日記帳？團務明細與付款狀態不會被改動。'
+    if (!window.confirm(message)) return
     setBusy(true)
     pushJournalUndo(rows)
     try {
@@ -189,8 +205,10 @@ export function JournalPage() {
     }
   }
 
+  const viewRows = useMemo(() => journalViewRows(rows, reports, groups), [rows, reports, groups])
+
   function downloadXlsx() {
-    const buf = journalToXlsxBuffer(rows)
+    const buf = journalToXlsxBuffer(viewRows)
     const blob = new Blob([buf], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
@@ -335,9 +353,9 @@ export function JournalPage() {
               <span role="columnheader">後五碼</span>
               <span role="columnheader"> </span>
             </div>
-            {rows.map((row) => (
+            {viewRows.map((row) => (
               <div key={row.id} className="journal-table-row" role="row">
-                <span role="cell">{row.date || '—'}</span>
+                <span role="cell">{formatJournalDate(row.date) || '—'}</span>
                 <strong role="cell">{money(row.amount)}</strong>
                 <span role="cell">
                   {displayJournalNote(row) || '—'}
@@ -348,7 +366,12 @@ export function JournalPage() {
                   {formatLastFiveDisplay(displayJournalLastFive(row))}
                 </span>
                 <span role="cell">
-                  <button type="button" className="journal-del" onClick={() => void removeRow(row.id)} aria-label="刪除">
+                  <button
+                    type="button"
+                    className="journal-del"
+                    onClick={() => void removeRow(row.sourceId)}
+                    aria-label={row.split ? '刪除這筆匯款的全部分行' : '刪除'}
+                  >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </span>
