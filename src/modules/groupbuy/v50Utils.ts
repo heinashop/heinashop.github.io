@@ -104,13 +104,19 @@ export function daysUntil(iso: string, today = localTodayIso()): number | null {
   return Math.round((endMs - startMs) / 86400000)
 }
 
-/** 未來 2 日內（不含今日）結單／結束販賣，僅回傳團務名稱 */
+/** 今日起 7 日內結單／結束販賣。已下單、已發貨、已結束不再提醒。 */
 export function summarizeImminentDates(
   groups: GroupBuyGroup[],
   today = localTodayIso(),
 ): DeadlineSummary {
-  const closing: string[] = []
-  const saleEnd: string[] = []
+  const closing: { label: string; days: number }[] = []
+  const saleEnd: { label: string; days: number }[] = []
+  const soon = (days: number | null) => days !== null && days >= 0 && days <= 7
+  const labelFor = (name: string, iso: string) => {
+    const ymd = formatYmd(iso)
+    const md = /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : ''
+    return md ? `${name}（${md}）` : name
+  }
   for (const g of groups) {
     const status = normalizeGroupStatus(g.status)
     if (status === '已結束' || status === '已下單' || status === '官方已發貨') continue
@@ -119,13 +125,14 @@ export function summarizeImminentDates(
     const sd = String(g.saleEndDate || '').trim()
     const leftClose = cd ? daysUntil(cd, today) : null
     const leftSale = sd ? daysUntil(sd, today) : null
-    if (leftClose !== null && leftClose >= 1 && leftClose <= 2) closing.push(name)
-    if (leftSale !== null && leftSale >= 1 && leftSale <= 2) saleEnd.push(name)
+    if (soon(leftClose)) closing.push({ label: labelFor(name, cd), days: leftClose as number })
+    if (soon(leftSale)) saleEnd.push({ label: labelFor(name, sd), days: leftSale as number })
   }
-  const sortNames = (names: string[]) => [...names].sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+  const sortLabels = (items: { label: string; days: number }[]) =>
+    [...items].sort((a, b) => a.days - b.days || a.label.localeCompare(b.label, 'zh-Hant')).map((item) => item.label)
   return {
-    closingGroups: sortNames(closing),
-    saleEndGroups: sortNames(saleEnd),
+    closingGroups: sortLabels(closing),
+    saleEndGroups: sortLabels(saleEnd),
   }
 }
 
