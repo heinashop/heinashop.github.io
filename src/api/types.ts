@@ -234,8 +234,10 @@ export type GroupBuyGroup = {
   coverImageUrl?: string
   /** 開團專區：多張圖片 URL 或 data URL */
   imageUrls?: string[]
-  /** 開團專區／團務小卡備註 */
+  /** 開團專區／團務小卡備註（客人看得到） */
   remarks?: string
+  /** 團務管理內部備註，不會出現在開團專區或顧客查單 */
+  privateNote?: string
   /** 開團中心：缺貨待補 */
   stockAlert?: boolean
   /** 缺貨待補備註，例如缺哪一款、下次查看日 */

@@ -127,6 +127,7 @@ function formToGroup(values: GroupSetupFormValues, existing?: GroupBuyGroup): Gr
       ? primaryGroupImageUrl(existing.imageUrls, existing.coverImageUrl)
       : '',
     remarks: values.remarks.trim(),
+    privateNote: values.privateNote.trim(),
     orders: existing?.orders || [],
   }
 }
@@ -148,6 +149,7 @@ function groupToForm(g: GroupBuyGroup): GroupSetupFormValues {
     imageUrls: normalizeGroupImageUrls(g.imageUrls, g.coverImageUrl),
     coverImageUrl: primaryGroupImageUrl(g.imageUrls, g.coverImageUrl),
     remarks: g.remarks || '',
+    privateNote: g.privateNote || '',
   }
 }
 
